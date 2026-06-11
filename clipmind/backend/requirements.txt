@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+yt-dlp
+youtube-transcript-api
+google-generativeai
+python-dotenv
+python-multipart
+opencv-python
+openai

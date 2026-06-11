@@ -1,0 +1,16 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Environment Keys
+.env
+
+# Application Downloads & Clip Outputs
+backend/output/
+backend/db/
+output/
+downloads/
+temp/

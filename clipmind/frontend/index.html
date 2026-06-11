@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipMind - AI YouTube Clip Extractor</title>
+    <meta name="description" content="Extract the most interesting, peak moments from any YouTube video in seconds using AI transcript analysis.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Animated Background Blobs at Corners -->
+    <div class="blob blob-tl"></div>
+    <div class="blob blob-tr"></div>
+    <div class="blob blob-bl"></div>
+    <div class="blob blob-br"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1 class="logo-text">Clip<span>Mind</span></h1>
+            <p class="subtitle">Extract the best moments from any YouTube video using AI</p>
+        </header>
+
+        <!-- Main Workspace -->
+        <main>
+            <!-- Form Card -->
+            <section class="card form-card">
+                <form id="extractor-form">
+                    <!-- YouTube URL Input -->
+                    <div class="input-group">
+                        <label for="youtube-url">YouTube Video URL</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔗</span>
+                            <input 
+                                type="url" 
+                                id="youtube-url" 
+                                placeholder="Paste YouTube link (e.g. https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
+                                required
+                            >
+                        </div>
+                    </div>
+
+                    <!-- Number of Clips Input -->
+                    <div class="input-group">
+                        <label for="num-clips">Number of Clips to Generate</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🎬</span>
+                            <input 
+                                type="number" 
+                                id="num-clips" 
+                                min="1" 
+                                max="10" 
+                                value="5"
+                                required
+                            >
+                        </div>
+                        <p class="input-hint">Specify the number of key highlights to extract (between 1 and 10).</p>
+                    </div>
+
+                    <!-- API Key Input -->
+                    <div class="input-group">
+                        <label for="api-key">API Key (Gemini or OpenAI)</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔑</span>
+                            <input 
+                                type="password" 
+                                id="api-key" 
+                                placeholder="Enter Gemini or OpenAI API Key (Optional if configured on backend)"
+                            >
+                            <button type="button" id="toggle-key-visibility" class="btn-icon">👁️</button>
+                        </div>
+                        <p class="input-hint">Your API Key is saved locally and sent only to the backend server.</p>
+                    </div>
+
+                    <!-- Action Button -->
+                    <button type="submit" id="submit-btn" class="btn btn-primary">
+                        <span class="btn-text">Extract Clips ✨</span>
+                        <div class="spinner hidden"></div>
+                    </button>
+                </form>
+            </section>
+
+            <!-- Error Banner -->
+            <section id="error-container" class="card error-card hidden">
+                <div class="error-header">
+                    <span class="error-icon">⚠️</span>
+                    <h3>Something went wrong</h3>
+                </div>
+                <p id="error-message"></p>
+                <button id="error-dismiss-btn" class="btn btn-secondary btn-small">Dismiss</button>
+            </section>
+
+            <!-- Progress Tracker Section -->
+            <section id="progress-section" class="card progress-card hidden">
+                <h3>Processing Video</h3>
+                <p id="status-message">Initializing process...</p>
+
+                <!-- Custom Stepper -->
+                <div class="stepper">
+                    <div class="step" id="step-fetching">
+                        <div class="step-circle">📝</div>
+                        <div class="step-label">Transcript</div>
+                    </div>
+                    <div class="step-line"></div>
+                    <div class="step" id="step-analyzing">
+                        <div class="step-circle">🤖</div>
+                        <div class="step-label">AI Analysis</div>
+                    </div>
+                    <div class="step-line"></div>
+                    <div class="step" id="step-downloading">
+                        <div class="step-circle">⬇️</div>
+                        <div class="step-label">Download</div>
+                    </div>
+                    <div class="step-line"></div>
+                    <div class="step" id="step-clipping">
+                        <div class="step-circle">✂️</div>
+                        <div class="step-label">Clipping</div>
+                    </div>
+                </div>
+
+                <!-- Custom Progress Bar -->
+                <div class="progress-bar-container">
+                    <div id="progress-fill" class="progress-bar-fill"></div>
+                </div>
+                <div class="progress-percent" id="progress-percent">0%</div>
+            </section>
+
+            <!-- Results Section -->
+            <section id="results-section" class="results-section hidden">
+                <div class="results-header">
+                    <h2>🎯 AI Highlights</h2>
+                    <p>We found <span id="clips-count">0</span> key highlights — each under 58 seconds.</p>
+                </div>
+
+                <div id="clips-grid" class="clips-grid">
+                    <!-- Clip cards will be dynamically injected here -->
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <p>ClipMind &copy; 2026. Created by Anil Babu Samineni. Made with Vanilla CSS, FastAPI, and Gemini / OpenAI.</p>
+        </footer>
+    </div>
+
+    <!-- JS App Entry -->
+    <script src="app.js"></script>
+</body>
+</html>
