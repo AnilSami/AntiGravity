@@ -809,6 +809,18 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
                             scale
                         )
                 
+                # Draw Dynamic Progress Bar Overlay (matching the sunset-orange theme)
+                if target_frame_count > 1:
+                    prog = min(1.0, frame_index / (target_frame_count - 1))
+                else:
+                    prog = 1.0
+                # Background track (charcoal gray)
+                cv2.rectangle(combined_frame, (0, 1912), (1080, 1918), (60, 60, 60), -1)
+                # Active progress bar (sunset orange BGR = (22, 115, 249))
+                bar_w = int(prog * 1080)
+                if bar_w > 0:
+                    cv2.rectangle(combined_frame, (0, 1912), (bar_w, 1918), (22, 115, 249), -1)
+
                 out.write(combined_frame)
                 frame_index += 1
         finally:
