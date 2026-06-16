@@ -15,6 +15,9 @@ const submitBtnSpinner = submitBtn.querySelector('.spinner');
 const errorContainer = document.getElementById('error-container');
 const errorMessage = document.getElementById('error-message');
 const errorDismissBtn = document.getElementById('error-dismiss-btn');
+const keyBadgeContainer = document.getElementById('key-badge-container');
+const keyTypeBadge = document.getElementById('key-type-badge');
+const tryMockBtn = document.getElementById('try-mock-btn');
 
 const progressSection = document.getElementById('progress-section');
 const statusMessage = document.getElementById('status-message');
@@ -48,6 +51,38 @@ toggleKeyVisibilityBtn.addEventListener('click', () => {
 // Dismiss Error
 errorDismissBtn.addEventListener('click', () => {
     errorContainer.classList.add('hidden');
+});
+
+// Try Mock Mode Handler
+tryMockBtn.addEventListener('click', () => {
+    apiKeyInput.value = 'mock';
+    apiKeyInput.dispatchEvent(new Event('input'));
+    errorContainer.classList.add('hidden');
+    form.dispatchEvent(new Event('submit'));
+});
+
+// API Key Live Diagnostics
+apiKeyInput.addEventListener('input', () => {
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+        keyBadgeContainer.classList.add('hidden');
+        return;
+    }
+    keyBadgeContainer.classList.remove('hidden');
+    keyTypeBadge.className = 'badge';
+    if (key.startsWith('sk-')) {
+        keyTypeBadge.textContent = 'OpenAI Key 🔑';
+        keyTypeBadge.classList.add('badge-openai');
+    } else if (key.startsWith('mock')) {
+        keyTypeBadge.textContent = 'Mock Mode 🧪';
+        keyTypeBadge.classList.add('badge-mock');
+    } else if (key.length > 15) {
+        keyTypeBadge.textContent = 'Gemini Key 🔑';
+        keyTypeBadge.classList.add('badge-gemini');
+    } else {
+        keyTypeBadge.textContent = 'Invalid / Short Key';
+        keyTypeBadge.classList.add('badge-invalid');
+    }
 });
 
 // Helper: Format seconds to M:SS
@@ -136,7 +171,7 @@ function resetUI() {
     
     // Clear stepper states
     steps.forEach(step => {
-        step.classList.remove('active', 'completed');
+        step.classList.remove('active', 'completed', 'failed');
     });
 
     if (eventSource) {
@@ -149,6 +184,22 @@ function resetUI() {
 function showError(msg) {
     errorMessage.textContent = msg;
     errorContainer.classList.remove('hidden');
+    
+    // Detect if this is a quota or rate-limit issue
+    const lowercaseMsg = msg.toLowerCase();
+    if (lowercaseMsg.includes('quota') || lowercaseMsg.includes('429') || lowercaseMsg.includes('rate limit') || lowercaseMsg.includes('limit exceeded') || lowercaseMsg.includes('key is missing') || lowercaseMsg.includes('api key')) {
+        tryMockBtn.classList.remove('hidden');
+    } else {
+        tryMockBtn.classList.add('hidden');
+    }
+    
+    // Mark current active step as failed
+    const activeStep = steps.find(step => step.classList.contains('active'));
+    if (activeStep) {
+        activeStep.classList.remove('active');
+        activeStep.classList.add('failed');
+    }
+    
     errorContainer.scrollIntoView({ behavior: 'smooth' });
 }
 

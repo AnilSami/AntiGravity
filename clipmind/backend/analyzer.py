@@ -11,8 +11,215 @@ logger = logging.getLogger(__name__)
 
 # Test suite compatibility keywords: HOOK, CORE VALUE, NATURAL ENDING, INFORMATIONAL DENSITY
 
+import time
+import random
+import os
+import openai
+from typing import Optional
+
+# Safely handle Google APIError imports
+try:
+    from google.genai.errors import APIError as GeminiAPIError
+except ImportError:
+    GeminiAPIError = None
+
+
+class LLMResilienceManager:
+    """
+    A unified, thread-safe service that manages:
+    1. Client caching to avoid repeated client instantiations.
+    2. Exponential backoff and jitter for transient errors (429 rate limit, 5xx server errors).
+    3. Cross-model key fallback (OpenAI <-> Gemini) when primary keys fail or exhaust quota.
+    """
+    def __init__(
+        self,
+        primary_key: Optional[str] = None,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        max_delay: float = 16.0
+    ):
+        # Determine primary key (explicit arg -> GEMINI_API_KEY -> OPENAI_API_KEY)
+        self.primary_key = primary_key or os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        
+        # Determine fallback key
+        self.secondary_key = None
+        gemini_env = os.getenv("GEMINI_API_KEY")
+        openai_env = os.getenv("OPENAI_API_KEY")
+        
+        if self.primary_key:
+            is_openai = self._is_openai_key(self.primary_key)
+            if is_openai:
+                self.secondary_key = gemini_env
+            else:
+                self.secondary_key = openai_env
+        else:
+            if gemini_env and openai_env:
+                self.primary_key = gemini_env
+                self.secondary_key = openai_env
+            elif gemini_env:
+                self.primary_key = gemini_env
+            elif openai_env:
+                self.primary_key = openai_env
+
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        
+        # Cache client objects to optimize connection reuse
+        self._openai_client = None
+        self._gemini_client = None
+
+    def _get_openai_client(self, api_key: str) -> OpenAI:
+        if not self._openai_client:
+            self._openai_client = OpenAI(api_key=api_key)
+        return self._openai_client
+
+    def _get_gemini_client(self, api_key: str) -> genai.Client:
+        if not self._gemini_client:
+            self._gemini_client = genai.Client(api_key=api_key)
+        return self._gemini_client
+
+    def _is_openai_key(self, api_key: str) -> bool:
+        return api_key.startswith("sk-")
+
+    def _execute_single_call(
+        self,
+        api_key: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_json: bool
+    ) -> str:
+        """Invokes the actual underlying provider API."""
+        if self._is_openai_key(api_key):
+            client = self._get_openai_client(api_key)
+            response_format = {"type": "json_object"} if response_json else None
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format=response_format
+            )
+            return response.choices[0].message.content
+        else:
+            client = self._get_gemini_client(api_key)
+            config_args = {}
+            if response_json:
+                config_args["response_mime_type"] = "application/json"
+            if system_prompt:
+                config_args["system_instruction"] = system_prompt
+                
+            config = genai_types.GenerateContentConfig(**config_args)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_prompt,
+                config=config
+            )
+            return response.text
+
+    def call(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_json: bool = True
+    ) -> str:
+        """
+        Executes completion with primary key. If that fails (and max retries are exceeded
+        or a fatal quota/auth limit is hit), it falls back to the secondary key.
+        """
+        if not self.primary_key:
+            raise ValueError("No API key available for LLM calls.")
+
+        try:
+            return self._call_with_retry(self.primary_key, system_prompt, user_prompt, response_json)
+        except Exception as primary_error:
+            if not self.secondary_key:
+                logger.error("Primary LLM call failed and no secondary fallback key is available.")
+                raise primary_error
+            
+            primary_provider = "OpenAI" if self._is_openai_key(self.primary_key) else "Gemini"
+            fallback_provider = "OpenAI" if self._is_openai_key(self.secondary_key) else "Gemini"
+            logger.warning(
+                f"Primary provider ({primary_provider}) failed. "
+                f"Attempting fallback to secondary provider ({fallback_provider}). Error: {primary_error}"
+            )
+            
+            try:
+                return self._call_with_retry(self.secondary_key, system_prompt, user_prompt, response_json)
+            except Exception as secondary_error:
+                logger.error(f"Fallback provider ({fallback_provider}) also failed: {secondary_error}")
+                raise RuntimeError(
+                    f"All configured LLM providers failed. "
+                    f"Primary ({primary_provider}) Error: {primary_error}. "
+                    f"Fallback ({fallback_provider}) Error: {secondary_error}."
+                ) from secondary_error
+
+    def _call_with_retry(
+        self,
+        api_key: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_json: bool
+    ) -> str:
+        """Executes LLM call with exponential backoff + jitter for transient failures."""
+        is_openai = self._is_openai_key(api_key)
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                return self._execute_single_call(api_key, system_prompt, user_prompt, response_json)
+            except Exception as e:
+                # Determine if the exception is transient (429 or 5xx)
+                is_transient = False
+                
+                # Check OpenAI exceptions
+                if is_openai:
+                    if isinstance(e, openai.RateLimitError):
+                        is_transient = True
+                    elif isinstance(e, openai.InternalServerError):
+                        is_transient = True
+                # Check Gemini exceptions
+                else:
+                    if GeminiAPIError and isinstance(e, GeminiAPIError):
+                        status_code = getattr(e, "code", None) or getattr(e, "status_code", None)
+                        if status_code in (429, 500, 503, 504):
+                            is_transient = True
+                    else:
+                        status_code = getattr(e, "code", None) or getattr(e, "status_code", None)
+                        if status_code in (429, 500, 503, 504):
+                            is_transient = True
+                
+                # Fallback text checking for other exception wrappers
+                error_msg = str(e).lower()
+                if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
+                    is_transient = True
+                elif "500" in error_msg or "503" in error_msg or "504" in error_msg or "server error" in error_msg:
+                    is_transient = True
+
+                # If the error is fatal (unauthorized/invalid params), raise immediately to trigger key fallback
+                if not is_transient:
+                    logger.error(f"Fatal client error encountered: {e}. Aborting retries for this provider.")
+                    raise e
+
+                # If we've run out of retries, raise the error
+                if attempt == self.max_retries:
+                    logger.error(f"Failed to execute LLM call after {self.max_retries} attempts.")
+                    raise e
+
+                # Calculate exponential backoff with jitter
+                sleep_time = min(self.max_delay, self.base_delay * (2 ** attempt))
+                sleep_time += random.uniform(0.0, 1.0)
+                logger.warning(
+                    f"LLM call failed: {e}. Retrying in {sleep_time:.2f} seconds "
+                    f"(Attempt {attempt + 1}/{self.max_retries})..."
+                )
+                time.sleep(sleep_time)
+
+        raise RuntimeError("Unexpected fallthrough in retry loop.")
+
 
 # ── Constants ────────────────────────────────────────────────────────────────
+
 MIN_CLIP_DURATION = 25.0   # seconds
 MAX_CLIP_DURATION = 58.0   # seconds (2 s buffer under the 60 s platform limit)
 DEFAULT_CLIP_DURATION = 35.0  # fallback when AI returns invalid bounds
@@ -345,90 +552,12 @@ def _extract_clips_list(data) -> list:
     raise ValueError("Parsed JSON does not contain a valid list of clips.")
 
 
-def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> dict:
-    """
-    Pass 2: Refines a single candidate clip's start_index and end_index 
-    using a micro-targeted AI prompt over a local window of segments.
-    """
-    if api_key.startswith("mock"):
-        return candidate  # No-op for mock keys
-
-    total_lines = len(raw_transcript)
-    start_idx = candidate.get("start_index")
-    end_idx = candidate.get("end_index")
-
-    if start_idx is None or end_idx is None:
-        return candidate  # Fallback if no indices are available
-
-    # 1. Define segment window (8 before, 8 after)
-    window_start = max(0, start_idx - 8)
-    window_end = min(total_lines - 1, end_idx + 8)
-
-    # 2. Format window retaining original global indices
-    formatted_window = []
-    for idx in range(window_start, window_end + 1):
-        entry = raw_transcript[idx]
-        formatted_window.append(
-            f"[{idx}] [{entry.start:.2f} - {entry.start + entry.duration:.2f}] {entry.text}"
-        )
-    window_text = "\n".join(formatted_window)
-
-    prompt = _REFINEMENT_PROMPT_TEMPLATE.format(
-        candidate_start=start_idx,
-        candidate_end=end_idx,
-        transcript_window=window_text
-    )
-
-    # 3. Call AI Model
-    response_text = ""
-    try:
-        if api_key.startswith("sk-"):
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a video editing assistant that outputs only valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"}
-            )
-            response_text = response.choices[0].message.content
-        else:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            response_text = response.text
-
-        # 4. Parse & Update Candidate
-        data = json.loads(response_text.strip())
-        adj_start = int(float(data["adjusted_start_index"]))
-        adj_end = int(float(data["adjusted_end_index"]))
-        
-        # Verify adjustment is within local window bounds
-        if window_start <= adj_start <= adj_end <= window_end:
-            refined = candidate.copy()
-            refined["start_index"] = adj_start
-            refined["end_index"] = adj_end
-            refined["reason"] = data.get("explanation", candidate["reason"])
-            logger.info(f"Refinement succeeded: {start_idx}->{adj_start}, {end_idx}->{adj_end}")
-            return refined
-        else:
-            logger.warning(f"Refined indices out of window bounds: [{adj_start}, {adj_end}]. Using original.")
-    except Exception as e:
-        logger.error(f"Error during clip refinement API/parse: {e}. Using original candidate.")
-
-    return candidate
-
-
-def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> dict:
+def _refine_single_clip(candidate: dict, raw_transcript: list, llm: LLMResilienceManager) -> dict:
     """
     Pass 2 & 3: Refines start_index and end_index (Sentence Editor),
     then generates optimized YouTube Shorts titles, descriptions, and tags (Viral Publisher).
     """
-    if api_key.startswith("mock"):
+    if llm.primary_key.startswith("mock"):
         return candidate  # No-op for mock keys
 
     total_lines = len(raw_transcript)
@@ -462,28 +591,13 @@ def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> 
     adj_start = start_idx
     adj_end = end_idx
 
-    # Call Editor Agent
+    # Call Editor Agent via resilience manager
     try:
-        if api_key.startswith("sk-"):
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a dialogue editor that outputs only valid JSON."},
-                    {"role": "user", "content": prompt_editor}
-                ],
-                response_format={"type": "json_object"}
-            )
-            response_text = response.choices[0].message.content
-        else:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt_editor,
-                config=genai_types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            response_text = response.text
-
+        response_text = llm.call(
+            system_prompt="You are a dialogue editor that outputs only valid JSON.",
+            user_prompt=prompt_editor,
+            response_json=True
+        )
         data = json.loads(response_text.strip())
         temp_start = int(float(data["adjusted_start_index"]))
         temp_end = int(float(data["adjusted_end_index"]))
@@ -511,34 +625,18 @@ def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> 
     prompt_publisher = PUBLISHER_AGENT_PROMPT_TEMPLATE.format(clip_text=clip_text)
 
     try:
-        if api_key.startswith("sk-"):
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a digital marketing assistant that outputs only valid JSON."},
-                    {"role": "user", "content": prompt_publisher}
-                ],
-                response_format={"type": "json_object"}
-            )
-            pub_response_text = response.choices[0].message.content
-        else:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt_publisher,
-                config=genai_types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            pub_response_text = response.text
-
+        pub_response_text = llm.call(
+            system_prompt="You are a digital marketing assistant that outputs only valid JSON.",
+            user_prompt=prompt_publisher,
+            response_json=True
+        )
         pub_data = json.loads(pub_response_text.strip())
         refined["shorts_title"] = pub_data.get("shorts_title", f"{refined.get('title', 'Clip')} #shorts")
         refined["shorts_description"] = pub_data.get("shorts_description", f"Check out this clip! Subscribe for more! #shorts")
         refined["shorts_tags"] = pub_data.get("shorts_tags", ["shorts"])
-        logger.info(f"Viral Publisher SEO metadata generated successfully.")
+        logger.info("Viral Publisher SEO metadata generated successfully.")
     except Exception as e:
         logger.error(f"Error during Viral Publisher execution: {e}. Generating fallback metadata.")
-        # Fallbacks (will be normalized by _validate_clips anyway)
         refined["shorts_title"] = f"{refined.get('title', 'Clip')} #shorts"
         refined["shorts_description"] = f"{refined.get('reason', 'Interesting moment.')} Subscribe for more! #shorts"
         refined["shorts_tags"] = ["shorts"]
@@ -551,14 +649,15 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
     Uses a 4-Agent pipeline (Scout, Curator, Editor, Publisher) to extract
     high-virality, unique highlight clips with clean sentence boundaries.
     """
-    if not api_key:
-        raise ValueError("API key is required. Please set it in .env or provide it in the input.")
+    # Permit loading from env if api_key is not supplied explicitly
+    if not api_key and not os.getenv("GEMINI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("API key is required. Please set GEMINI_API_KEY/OPENAI_API_KEY in .env or provide it in the input.")
 
-    if api_key.startswith("mock"):
+    # Handled separately to prevent empty mock calls
+    if api_key and api_key.startswith("mock"):
         logger.info(f"Mock API key detected — returning {num_clips} pre-built clips (no real API call).")
         scaled_clips = []
         if not raw_transcript:
-            # Fallback if no transcript list is provided
             for i in range(num_clips):
                 scaled_clips.append({
                     "title": f"Mock Clip {i+1}",
@@ -574,7 +673,6 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
             lines_per_clip = max(1, total_lines // num_clips)
             for i in range(num_clips):
                 start_idx = (i * lines_per_clip) % total_lines
-                # Walk forward to cover roughly 30 seconds
                 end_idx = start_idx
                 dur = 0.0
                 while end_idx < total_lines - 1 and dur < 30.0:
@@ -592,37 +690,19 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
                 })
         return _validate_clips(scaled_clips, raw_transcript, ending_safety_margin=ending_safety_margin)
 
+    # Initialize the LLM Resilience Manager
+    llm = LLMResilienceManager(primary_key=api_key)
+
     # 1. --- AGENT 1: THE CLIP SCOUT ---
-    # Fetch initial candidate list using SCOUT_AGENT_PROMPT_TEMPLATE
     scout_prompt = SCOUT_AGENT_PROMPT_TEMPLATE.format(transcript=transcript)
-    scout_response_text = ""
-    
     logger.info("Running Agent 1: The Clip Scout...")
     try:
-        if api_key.startswith("sk-"):
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a short-form video researcher that outputs only valid JSON."},
-                    {"role": "user", "content": scout_prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-            scout_response_text = response.choices[0].message.content
-        else:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=scout_prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            scout_response_text = response.text
-            
+        scout_response_text = llm.call(
+            system_prompt="You are a short-form video researcher that outputs only valid JSON.",
+            user_prompt=scout_prompt,
+            response_json=True
+        )
         scout_data = json.loads(scout_response_text.strip())
-        # The JSON structure returned has a "candidates" key
         if "candidates" in scout_data:
             candidates = scout_data["candidates"]
         else:
@@ -636,7 +716,6 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
         raise ValueError("Clip Scout did not find any candidates in the transcript.")
 
     # 2. --- AGENT 2: THE CONTENT CURATOR (DEDUPLICATOR) ---
-    # Take Scout candidates, format as JSON string, and call curator
     selected_candidates = []
     try:
         logger.info("Running Agent 2: The Content Curator...")
@@ -647,29 +726,11 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
             transcript=transcript
         )
         
-        curator_response_text = ""
-        if api_key.startswith("sk-"):
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a content curator assistant that outputs only valid JSON."},
-                    {"role": "user", "content": curator_prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-            curator_response_text = response.choices[0].message.content
-        else:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=curator_prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            curator_response_text = response.text
-            
+        curator_response_text = llm.call(
+            system_prompt="You are a content curator assistant that outputs only valid JSON.",
+            user_prompt=curator_prompt,
+            response_json=True
+        )
         curator_data = json.loads(curator_response_text.strip())
         if "selected_clips" in curator_data:
             selected_candidates = curator_data["selected_clips"]
@@ -678,7 +739,6 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
         logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips.")
     except Exception as e:
         logger.error(f"Content Curator execution failed: {e}. Falling back to top Scout candidates.")
-        # Fallback: just use top candidates from Scout, sorted by virality score if available
         try:
             sorted_candidates = sorted(candidates, key=lambda c: c.get("virality_score", 5), reverse=True)
         except Exception:
@@ -688,7 +748,6 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
     if not selected_candidates:
         selected_candidates = candidates[:num_clips]
 
-    # Apply num_clips limit
     selected_candidates = selected_candidates[:num_clips]
 
     # 3 & 4. --- AGENTS 3 & 4: SENTENCE EDITOR & VIRAL PUBLISHER (Parallel) ---
@@ -696,7 +755,7 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
     logger.info("Running Agent 3 (Sentence Editor) and Agent 4 (Viral Publisher) in parallel...")
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
-            executor.submit(_refine_single_clip, candidate, raw_transcript, api_key): candidate
+            executor.submit(_refine_single_clip, candidate, raw_transcript, llm): candidate
             for candidate in selected_candidates
         }
         for future in as_completed(futures):

@@ -73,6 +73,9 @@
                             >
                             <button type="button" id="toggle-key-visibility" class="btn-icon">👁️</button>
                         </div>
+                        <div id="key-badge-container" class="badge-container hidden">
+                            <span id="key-type-badge" class="badge"></span>
+                        </div>
                         <p class="input-hint">Your API Key is saved locally and sent only to the backend server.</p>
                     </div>
 
@@ -91,7 +94,10 @@
                     <h3>Something went wrong</h3>
                 </div>
                 <p id="error-message"></p>
-                <button id="error-dismiss-btn" class="btn btn-secondary btn-small">Dismiss</button>
+                <div class="error-actions">
+                    <button id="error-dismiss-btn" class="btn btn-secondary btn-small">Dismiss</button>
+                    <button id="try-mock-btn" class="btn btn-primary btn-small hidden">Try Mock Mode 🚀</button>
+                </div>
             </section>
 
             <!-- Progress Tracker Section -->

@@ -319,6 +319,7 @@ class JobStatus(BaseModel):
     message: str
     error: Optional[str] = None
     clips: List[ClipInfo] = []
+    created_at: float = 0.0
 
 # In-memory store for background job progress
 jobs: Dict[str, JobStatus] = {}
@@ -375,8 +376,10 @@ async def run_pipeline(job_id: str, url: str, api_key: str, num_clips: int = 5):
         job.message = "Downloading video from YouTube..."
         
         def on_download_progress(pct):
-            job.progress = 50 + int(pct * 0.2)  # maps 0-100 download percent to 50-70 job progress
-            job.message = f"Downloading video from YouTube... {pct}%"
+            def update():
+                job.progress = 50 + int(pct * 0.2)  # maps 0-100 download percent to 50-70 job progress
+                job.message = f"Downloading video from YouTube... {pct}%"
+            loop.call_soon_threadsafe(update)
             
         video_path = await loop.run_in_executor(None, download_video, url, download_dir, on_download_progress)
         

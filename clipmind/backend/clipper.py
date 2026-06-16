@@ -15,6 +15,18 @@ def check_ffmpeg() -> bool:
     """Checks if ffmpeg is installed and available in the PATH."""
     return shutil.which("ffmpeg") is not None
 
+def escape_ffmpeg_path(path: str) -> str:
+    """Escapes a Windows absolute path for use in FFmpeg filter graphs (subtitles/ass)."""
+    if not path:
+        return ""
+    # Swap backslashes to forward slashes
+    path = path.replace("\\", "/")
+    # Escape the colon for the drive letter (e.g. C: -> C\:)
+    path = path.replace(":", "\\:")
+    # Escape single quotes
+    path = path.replace("'", "'\\''")
+    return path
+
 def has_audio(input_path: str) -> bool:
     """Checks if the video has an audio stream using ffprobe."""
     if not check_ffmpeg():
@@ -63,11 +75,14 @@ def download_video(url: str, download_dir: str, progress_callback=None) -> str:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
+    valid_exts = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
     for file in os.listdir(download_dir):
         if file.startswith("full_video."):
-            file_path = os.path.join(download_dir, file)
-            logger.info(f"Downloaded video located at: {file_path}")
-            return file_path
+            _, ext = os.path.splitext(file)
+            if ext.lower() in valid_exts:
+                file_path = os.path.join(download_dir, file)
+                logger.info(f"Downloaded video located at: {file_path}")
+                return file_path
 
     raise FileNotFoundError("Downloaded video file not found in output directory.")
 
@@ -101,7 +116,7 @@ def parse_ass_time(time_str: str) -> float:
         mins = int(parts[1])
         secs_parts = parts[2].split('.')
         secs = int(secs_parts[0])
-        centis = int(secs_parts[1])
+        centis = int(secs_parts[1]) if len(secs_parts) > 1 else 0
         return hrs * 3600 + mins * 60 + secs + centis / 100.0
     except Exception:
         return 0.0
@@ -135,7 +150,11 @@ def parse_ass_subtitles(ass_path: str) -> list[dict]:
                     # Simple emoji detector
                     emojis_found = []
                     for char in clean_text:
-                        if ord(char) > 0x2000:
+                        code = ord(char)
+                        if (0x1F300 <= code <= 0x1F6FF or 
+                            0x2600 <= code <= 0x27BF or 
+                            0x1F900 <= code <= 0x1F9FF or 
+                            0x1FA70 <= code <= 0x1FAFF):
                             emojis_found.append(char)
                     
                     emoji = "".join(emojis_found) if emojis_found else ""
@@ -201,7 +220,7 @@ def create_broll_slide(width: int, height: int, text: str, emoji: str, t: float)
         )
         
         # Load fonts
-        font_emoji = load_font("arialbd.ttf", 120)
+        font_emoji = load_font("seguiemj.ttf", 120)
         font_text = load_font("arialbd.ttf", 50)
         
         # Draw emoji
@@ -247,24 +266,27 @@ def draw_popup_card(frame: np.ndarray, text: str, emoji: str, scale: float) -> n
         pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
         draw = ImageDraw.Draw(pil_img)
         
-        font = load_font("arialbd.ttf", 34)
+        font_text = load_font("arialbd.ttf", 34)
+        font_emoji = load_font("seguiemj.ttf", 34)
         
-        display_text = ""
-        if emoji and text:
-            display_text = f"{emoji} {text.upper()}"
-        elif emoji:
-            display_text = emoji
-        else:
-            display_text = text.upper()
+        # Calculate sizes and spacing dynamically
+        emoji_w, emoji_h = 0, 0
+        text_w, text_h = 0, 0
+        spacing = 12 if (emoji and text) else 0
+        
+        if emoji:
+            bbox_e = draw.textbbox((0, 0), emoji, font=font_emoji)
+            emoji_w = bbox_e[2] - bbox_e[0]
+            emoji_h = bbox_e[3] - bbox_e[1]
+        if text:
+            bbox_t = draw.textbbox((0, 0), text.upper(), font=font_text)
+            text_w = bbox_t[2] - bbox_t[0]
+            text_h = bbox_t[3] - bbox_t[1]
             
-        bbox = draw.textbbox((0, 0), display_text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-        
         pad_x = 24
         pad_y = 16
-        w = text_w + 2 * pad_x
-        h = text_h + 2 * pad_y
+        w = emoji_w + spacing + text_w + 2 * pad_x
+        h = max(emoji_h, text_h) + 2 * pad_y
         
         card_img = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
         card_draw = ImageDraw.Draw(card_img)
@@ -277,13 +299,14 @@ def draw_popup_card(frame: np.ndarray, text: str, emoji: str, scale: float) -> n
             width=2
         )
         
-        card_draw.text(
-            (w / 2, h / 2), 
-            display_text, 
-            fill=(255, 255, 255, 255), 
-            font=font, 
-            anchor="mm"
-        )
+        # Draw side by side
+        curr_x = pad_x
+        if emoji:
+            # Anchor left-middle: 'lm'
+            card_draw.text((curr_x, h / 2), emoji, fill=(255, 255, 255, 255), font=font_emoji, anchor="lm")
+            curr_x += emoji_w + spacing
+        if text:
+            card_draw.text((curr_x, h / 2), text.upper(), fill=(255, 255, 255, 255), font=font_text, anchor="lm")
         
         center_x = width / 2
         center_y = height * 0.22
@@ -313,32 +336,33 @@ _FACE_DRIFT_SPEED = 0.05
 def detect_shot_boundaries(video_path: str, fps: float) -> list[int]:
     """Detects frame indices where shot cuts occur in the video using grayscale difference."""
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return [0]
-        
-    prev_gray = None
-    frame_idx = 0
-    diff_values = []
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        if not cap.isOpened():
+            return [0]
             
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        small_gray = cv2.resize(gray, (0, 0), fx=0.1, fy=0.1)
+        prev_gray = None
+        frame_idx = 0
+        diff_values = []
         
-        if prev_gray is not None:
-            diff = cv2.absdiff(small_gray, prev_gray)
-            mean_diff = np.mean(diff)
-            diff_values.append((frame_idx, mean_diff))
-        else:
-            diff_values.append((frame_idx, 0.0))
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            small_gray = cv2.resize(gray, (0, 0), fx=0.1, fy=0.1)
             
-        prev_gray = small_gray
-        frame_idx += 1
-        
-    cap.release()
+            if prev_gray is not None:
+                diff = cv2.absdiff(small_gray, prev_gray)
+                mean_diff = np.mean(diff)
+                diff_values.append((frame_idx, mean_diff))
+            else:
+                diff_values.append((frame_idx, 0.0))
+                
+            prev_gray = small_gray
+            frame_idx += 1
+    finally:
+        cap.release()
     
     if not diff_values:
         return [0]
@@ -399,167 +423,168 @@ def get_shot_crop_offsets(video_path: str, width: int, height: int, fps: float, 
     logger.info(f"Shot-by-shot crop analysis: detected {len(shots)} shots in segment.")
     # Open video
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logger.error(f"Failed to open video in get_shot_crop_offsets: {video_path}")
+    try:
+        if not cap.isOpened():
+            logger.error(f"Failed to open video in get_shot_crop_offsets: {video_path}")
+            crop_w_base = int(height * 9 / 16)
+            crop_w_base = (crop_w_base // 2) * 2
+            static_center = max(0, min(width - crop_w_base, (width - crop_w_base) // 2))
+            return [static_center] * total_frames
+
+        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if actual_w > 0 and actual_h > 0:
+            width = actual_w
+            height = actual_h
+
         crop_w_base = int(height * 9 / 16)
         crop_w_base = (crop_w_base // 2) * 2
-        static_center = max(0, min(width - crop_w_base, (width - crop_w_base) // 2))
-        return [static_center] * total_frames
-
-    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if actual_w > 0 and actual_h > 0:
-        width = actual_w
-        height = actual_h
-
-    crop_w_base = int(height * 9 / 16)
-    crop_w_base = (crop_w_base // 2) * 2
-    
-    # Load Haar cascade
-    cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-    face_cascade = cv2.CascadeClassifier(cascade_path)
-    if face_cascade.empty():
-        logger.warning("Haar cascade classifier is empty or failed to load. Falling back to motion-only tracking.")
-    
-    # Downscale factor for performance (we resize frames to process faster)
-    scale_factor = 0.25 if width > 960 else 0.5
-    inv_scale = 1.0 / scale_factor
-    
-    # Analysis sampling interval (run face detection on every K-th frame to keep it extremely fast)
-    K = 3
-    
-    crop_x_by_frame = []
-
-    # Track overall face position persistence across frames
-    last_seen_face_cx = width / 2.0
-    face_lost_counter = 0
-
-    for shot_idx, (start, end) in enumerate(shots):
-        shot_len = end - start
-        if shot_len <= 0:
-            continue
-            
-        logger.info(f"Analyzing shot {shot_idx+1}/{len(shots)}: frames {start} to {end} (len={shot_len})")
         
-        # Frame indices we will analyze in this shot
-        analyze_indices = list(range(start, end, K))
-        if (end - 1) not in analyze_indices:
-            analyze_indices.append(end - 1)
-            
-        # Store raw target CX coordinates mapped to frame indices
-        raw_cx_targets = {}
+        # Load Haar cascade
+        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        if face_cascade.empty():
+            logger.warning("Haar cascade classifier is empty or failed to load. Falling back to motion-only tracking.")
         
-        prev_gray = None
+        # Downscale factor for performance (we resize frames to process faster)
+        scale_factor = 0.25 if width > 960 else 0.5
+        inv_scale = 1.0 / scale_factor
         
-        for idx in analyze_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if not ret:
-                raw_cx_targets[idx] = last_seen_face_cx
+        # Analysis sampling interval (run face detection on every K-th frame to keep it extremely fast)
+        K = 3
+        
+        crop_x_by_frame = []
+
+        # Track overall face position persistence across frames
+        last_seen_face_cx = width / 2.0
+        face_lost_counter = 0
+
+        for shot_idx, (start, end) in enumerate(shots):
+            shot_len = end - start
+            if shot_len <= 0:
                 continue
                 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            logger.info(f"Analyzing shot {shot_idx+1}/{len(shots)}: frames {start} to {end} (len={shot_len})")
             
-            # Try to detect faces
-            faces = []
-            if not face_cascade.empty():
-                small_gray = cv2.resize(gray, (0, 0), fx=scale_factor, fy=scale_factor)
-                faces = face_cascade.detectMultiScale(
-                    small_gray,
-                    scaleFactor=1.1,
-                    minNeighbors=4,
-                    minSize=(15, 15)
-                )
+            # Frame indices we will analyze in this shot
+            analyze_indices = list(range(start, end, K))
+            if (end - 1) not in analyze_indices:
+                analyze_indices.append(end - 1)
                 
-            # Compute motion difference if we have a previous frame
-            motion_thresh = None
-            if prev_gray is not None:
-                diff = cv2.absdiff(gray, prev_gray)
-                _, motion_thresh = cv2.threshold(diff, 15, 255, cv2.THRESH_BINARY)
-            prev_gray = gray
+            # Store raw target CX coordinates mapped to frame indices
+            raw_cx_targets = {}
             
-            chosen_cx = None
+            prev_gray = None
             
-            if len(faces) > 0:
-                best_score = -1.0
-                best_face_cx = None
+            for idx in analyze_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if not ret:
+                    raw_cx_targets[idx] = last_seen_face_cx
+                    continue
+                    
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
-                for (fx, fy, fw, fh) in faces:
-                    orig_x = fx * inv_scale
-                    orig_y = fy * inv_scale
-                    orig_w = fw * inv_scale
-                    orig_h = fh * inv_scale
-                    cx = orig_x + orig_w / 2.0
-                    area = orig_w * orig_h
+                # Try to detect faces
+                faces = []
+                if not face_cascade.empty():
+                    small_gray = cv2.resize(gray, (0, 0), fx=scale_factor, fy=scale_factor)
+                    faces = face_cascade.detectMultiScale(
+                        small_gray,
+                        scaleFactor=1.1,
+                        minNeighbors=4,
+                        minSize=(15, 15)
+                    )
                     
-                    motion_val = 0.0
-                    if motion_thresh is not None:
-                        x1, y1 = max(0, int(orig_x)), max(0, int(orig_y))
-                        x2, y2 = min(width, int(orig_x + orig_w)), min(height, int(orig_y + orig_h))
-                        if (x2 > x1) and (y2 > y1):
-                            face_roi = motion_thresh[y1:y2, x1:x2]
-                            motion_val = np.mean(face_roi) / 255.0
-                    
-                    score = area * (1.0 + 2.0 * motion_val)
-                    dist = abs(cx - last_seen_face_cx)
-                    dist_penalty = math.exp(-dist / (width * 0.25))
-                    score *= (0.4 + 0.6 * dist_penalty)
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_face_cx = cx
+                # Compute motion difference if we have a previous frame
+                motion_thresh = None
+                if prev_gray is not None:
+                    diff = cv2.absdiff(gray, prev_gray)
+                    _, motion_thresh = cv2.threshold(diff, 15, 255, cv2.THRESH_BINARY)
+                prev_gray = gray
                 
-                if best_face_cx is not None:
-                    chosen_cx = best_face_cx
-                    last_seen_face_cx = chosen_cx
-                    face_lost_counter = 0
+                chosen_cx = None
+                
+                if len(faces) > 0:
+                    best_score = -1.0
+                    best_face_cx = None
                     
-            if chosen_cx is None:
-                face_lost_counter += 1
-                if face_lost_counter < int(1.0 * fps / K):
-                    chosen_cx = last_seen_face_cx
-                else:
-                    motion_cx = None
-                    if motion_thresh is not None:
-                        moments = cv2.moments(motion_thresh)
-                        if moments["m00"] > 5000:
-                            motion_cx = moments["m10"] / moments["m00"]
-                            
-                    if motion_cx is not None:
-                        chosen_cx = motion_cx
-                    else:
-                        chosen_cx = last_seen_face_cx * (1.0 - _FACE_DRIFT_SPEED) + (width / 2.0) * _FACE_DRIFT_SPEED
+                    for (fx, fy, fw, fh) in faces:
+                        orig_x = fx * inv_scale
+                        orig_y = fy * inv_scale
+                        orig_w = fw * inv_scale
+                        orig_h = fh * inv_scale
+                        cx = orig_x + orig_w / 2.0
+                        area = orig_w * orig_h
                         
-            raw_cx_targets[idx] = chosen_cx
-            last_seen_face_cx = chosen_cx
-            
-        # Interpolate for all frames in the shot
-        shot_cx_targets = []
-        for frame_idx in range(start, end):
-            if frame_idx in raw_cx_targets:
-                shot_cx_targets.append(raw_cx_targets[frame_idx])
-            else:
-                lower_idx = max([k for k in analyze_indices if k < frame_idx], default=analyze_indices[0])
-                upper_idx = min([k for k in analyze_indices if k > frame_idx], default=analyze_indices[-1])
-                
-                if lower_idx == upper_idx:
-                    shot_cx_targets.append(raw_cx_targets[lower_idx])
-                else:
-                    t_val = (frame_idx - lower_idx) / (upper_idx - lower_idx)
-                    val = raw_cx_targets[lower_idx] * (1.0 - t_val) + raw_cx_targets[upper_idx] * t_val
-                    shot_cx_targets.append(val)
+                        motion_val = 0.0
+                        if motion_thresh is not None:
+                            x1, y1 = max(0, int(orig_x)), max(0, int(orig_y))
+                            x2, y2 = min(width, int(orig_x + orig_w)), min(height, int(orig_y + orig_h))
+                            if (x2 > x1) and (y2 > y1):
+                                face_roi = motion_thresh[y1:y2, x1:x2]
+                                motion_val = np.mean(face_roi) / 255.0
+                        
+                        score = area * (1.0 + 2.0 * motion_val)
+                        dist = abs(cx - last_seen_face_cx)
+                        dist_penalty = math.exp(-dist / (width * 0.25))
+                        score *= (0.4 + 0.6 * dist_penalty)
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_face_cx = cx
                     
-        # Apply zero phase-lag bidirectional smoothing within the shot boundaries
-        smoothing_window = int(1.5 * fps)
-        smoothed_cx = bidirectional_smooth(shot_cx_targets, smoothing_window)
-        
-        # Convert to crop_x offsets (centered on smooth target cx) and clamp
-        for cx in smoothed_cx:
-            crop_x = int(cx - crop_w_base / 2)
-            crop_x = max(0, min(width - crop_w_base, crop_x))
-            crop_x_by_frame.append(crop_x)
+                    if best_face_cx is not None:
+                        chosen_cx = best_face_cx
+                        last_seen_face_cx = chosen_cx
+                        face_lost_counter = 0
+                        
+                if chosen_cx is None:
+                    face_lost_counter += 1
+                    if face_lost_counter < int(1.0 * fps / K):
+                        chosen_cx = last_seen_face_cx
+                    else:
+                        motion_cx = None
+                        if motion_thresh is not None:
+                            moments = cv2.moments(motion_thresh)
+                            if moments["m00"] > 5000:
+                                motion_cx = moments["m10"] / moments["m00"]
+                                
+                        if motion_cx is not None:
+                            chosen_cx = motion_cx
+                        else:
+                            chosen_cx = last_seen_face_cx * (1.0 - _FACE_DRIFT_SPEED) + (width / 2.0) * _FACE_DRIFT_SPEED
+                            
+                raw_cx_targets[idx] = chosen_cx
+                last_seen_face_cx = chosen_cx
+                
+            # Interpolate for all frames in the shot
+            shot_cx_targets = []
+            for frame_idx in range(start, end):
+                if frame_idx in raw_cx_targets:
+                    shot_cx_targets.append(raw_cx_targets[frame_idx])
+                else:
+                    lower_idx = max([k for k in analyze_indices if k < frame_idx], default=analyze_indices[0])
+                    upper_idx = min([k for k in analyze_indices if k > frame_idx], default=analyze_indices[-1])
+                    
+                    if lower_idx == upper_idx:
+                        shot_cx_targets.append(raw_cx_targets[lower_idx])
+                    else:
+                        t_val = (frame_idx - lower_idx) / (upper_idx - lower_idx)
+                        val = raw_cx_targets[lower_idx] * (1.0 - t_val) + raw_cx_targets[upper_idx] * t_val
+                        shot_cx_targets.append(val)
+                        
+            # Apply zero phase-lag bidirectional smoothing within the shot boundaries
+            smoothing_window = int(1.5 * fps)
+            smoothed_cx = bidirectional_smooth(shot_cx_targets, smoothing_window)
             
-    cap.release()
+            # Convert to crop_x offsets (centered on smooth target cx) and clamp
+            for cx in smoothed_cx:
+                crop_x = int(cx - crop_w_base / 2)
+                crop_x = max(0, min(width - crop_w_base, crop_x))
+                crop_x_by_frame.append(crop_x)
+    finally:
+        cap.release()
     
     if len(crop_x_by_frame) < total_frames:
         pad_val = crop_x_by_frame[-1] if crop_x_by_frame else (width - crop_w_base) // 2
@@ -587,20 +612,29 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
         logger.info("Video is already portrait or square. Slicing and scaling to 1080x1920.")
         vf_str = "scale=1080:1920"
         if srt_path:
-            srt_filter_path = srt_path.replace("\\", "/")
+            srt_filter_path = escape_ffmpeg_path(srt_path)
             vf_str = f"scale=1080:1920,subtitles='{srt_filter_path}'"
         vf_args = ["-vf", vf_str]
-            
+        
+        has_aud = has_audio(input_path)
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
             "-i", input_path,
             "-t", str(duration),
             "-c:v", "libx264",
-        ] + vf_args + [
-            "-af", audio_filter,
-            "-c:a", "aac",
-            "-b:a", "192k",
+        ] + vf_args
+        
+        if has_aud:
+            cmd += [
+                "-af", audio_filter,
+                "-c:a", "aac",
+                "-b:a", "192k",
+            ]
+        else:
+            cmd += ["-an"]
+            
+        cmd += [
             "-preset", "fast",
             "-crf", "15",
             output_path
@@ -630,6 +664,7 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
                 
     try:
         # Step 1: Extract the segment without cropping first (keeps original audio/video sync)
+        has_aud = has_audio(input_path)
         cmd_segment = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -639,8 +674,16 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
             "-c:v", "libx264",
             "-g", "1",
             "-bf", "0",
-            "-c:a", "aac",
-            "-b:a", "192k",
+        ]
+        if has_aud:
+            cmd_segment += [
+                "-c:a", "aac",
+                "-b:a", "192k",
+            ]
+        else:
+            cmd_segment += ["-an"]
+            
+        cmd_segment += [
             "-preset", "ultrafast",
             "-crf", "22",
             temp_segment
@@ -776,7 +819,7 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
         
         # Step 3: Merge original audio from temp_segment with cropped video temp_cropped and burn subtitles
         if srt_path:
-            srt_filter_path = srt_path.replace("\\", "/")
+            srt_filter_path = escape_ffmpeg_path(srt_path)
             sub_filter = f"subtitles='{srt_filter_path}'"
             
             if has_audio(temp_segment):
@@ -843,9 +886,10 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
         crop_filter = "crop=trunc(ih*9/16/2)*2:ih,scale=1080:1920"
         vf_str = crop_filter
         if srt_path:
-            srt_filter_path = srt_path.replace("\\", "/")
+            srt_filter_path = escape_ffmpeg_path(srt_path)
             vf_str += f",subtitles='{srt_filter_path}'"
             
+        has_aud = has_audio(input_path)
         cmd_fallback = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -853,9 +897,17 @@ def extract_clip(input_path: str, start: float, end: float, output_path: str, sr
             "-t", str(duration),
             "-c:v", "libx264",
             "-vf", vf_str,
-            "-af", audio_filter,
-            "-c:a", "aac",
-            "-b:a", "192k",
+        ]
+        if has_aud:
+            cmd_fallback += [
+                "-af", audio_filter,
+                "-c:a", "aac",
+                "-b:a", "192k",
+            ]
+        else:
+            cmd_fallback += ["-an"]
+            
+        cmd_fallback += [
             "-preset", "fast",
             "-crf", "15",
             output_path

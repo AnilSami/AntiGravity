@@ -31,18 +31,37 @@ async def cleanup_old_jobs():
         await asyncio.sleep(600)  # Check every 10 minutes
         logger.info("Running job cleanup check...")
         now = time.time()
+        
+        # 1. Purge old jobs from in-memory dictionary
         for job_id, job in list(jobs.items()):
-            if job.status in ["completed", "failed"]:
-                folder = os.path.join("output", job_id)
-                if os.path.exists(folder):
-                    mtime = os.path.getmtime(folder)
-                    if now - mtime > 3600:  # 1 hour
-                        try:
-                            shutil.rmtree(folder)
-                            jobs.pop(job_id, None)  # safe pop — avoids KeyError on race condition
-                            logger.info(f"Cleaned up expired job folder: {folder}")
-                        except Exception as e:
-                            logger.error(f"Failed to delete expired job folder {folder}: {e}")
+            is_old = False
+            if job.created_at > 0:
+                if now - job.created_at > 3600:
+                    is_old = True
+            else:
+                is_old = job.status in ["completed", "failed"]
+            
+            if is_old:
+                jobs.pop(job_id, None)
+                logger.info(f"Purged old job {job_id} from memory.")
+
+        # 2. Clean up old or orphaned clip folders on disk
+        output_dir = "output"
+        if os.path.exists(output_dir):
+            try:
+                for folder_name in os.listdir(output_dir):
+                    folder_path = os.path.join(output_dir, folder_name)
+                    if os.path.isdir(folder_path):
+                        mtime = os.path.getmtime(folder_path)
+                        # Clean if orphaned (not in memory map) or modified > 1 hour ago
+                        if folder_name not in jobs or (now - mtime > 3600):
+                            try:
+                                shutil.rmtree(folder_path)
+                                logger.info(f"Cleaned up expired/orphaned folder: {folder_path}")
+                            except Exception as e:
+                                logger.error(f"Failed to delete expired folder {folder_path}: {e}")
+            except Exception as e:
+                logger.error(f"Error listing output directory during cleanup: {e}")
 
 
 @asynccontextmanager
@@ -91,11 +110,11 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
         )
 
     # Determine API key (request > .env fallback)
-    api_key = request.gemini_api_key or os.getenv("GEMINI_API_KEY")
+    api_key = request.gemini_api_key or os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="API Key is missing. Please provide a Gemini or OpenAI key in the input field or set GEMINI_API_KEY in .env."
+            detail="API Key is missing. Please provide a Gemini or OpenAI key in the input field or set GEMINI_API_KEY/OPENAI_API_KEY in .env."
         )
 
     job_id = str(uuid.uuid4())
@@ -106,7 +125,8 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
         id=job_id,
         status="pending",
         progress=0,
-        message="Initializing job..."
+        message="Initializing job...",
+        created_at=time.time()
     )
 
     if request.num_clips < 1 or request.num_clips > 10:
@@ -159,7 +179,15 @@ async def get_progress_stream(job_id: str):
 
             await asyncio.sleep(0.5)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/api/clips/{job_id}")

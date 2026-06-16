@@ -897,3 +897,60 @@ footer p {
         width: 42%;
     }
 }
+
+/* Diagnostic Badges */
+.badge-container {
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+}
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.badge-gemini {
+    background: rgba(2, 132, 199, 0.1);
+    color: #0284c7;
+    border: 1px solid rgba(2, 132, 199, 0.25);
+}
+.badge-openai {
+    background: rgba(16, 163, 127, 0.1);
+    color: #10a37f;
+    border: 1px solid rgba(16, 163, 127, 0.25);
+}
+.badge-mock {
+    background: rgba(147, 51, 234, 0.1);
+    color: #9333ea;
+    border: 1px solid rgba(147, 51, 234, 0.25);
+}
+.badge-invalid {
+    background: rgba(225, 29, 72, 0.1);
+    color: #e11d48;
+    border: 1px solid rgba(225, 29, 72, 0.25);
+}
+
+.error-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+/* Stepper Failed State */
+.step.failed .step-circle {
+    border-color: var(--error-color);
+    background: rgba(225, 29, 72, 0.1);
+    box-shadow: 0 0 0 4px rgba(225, 29, 72, 0.18);
+}
+.step.failed .step-label {
+    color: var(--error-color);
+    font-weight: 750;
+}
+.step.failed + .step-line {
+    background: var(--error-color);
+}

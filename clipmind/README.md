@@ -1,97 +1,84 @@
-# ClipMind: YouTube Smart Clip Extractor
+# 🌌 AntiGravity: The Vibe Coding Odyssey
 
-ClipMind is a modern web application that accepts a YouTube link, retrieves its transcript, analyzes the content using **Gemini 2.5 Flash**, and automatically extracts key highlight clips (under 60 seconds each) that represent peak interest or important insights. It then crops them to a 9:16 portrait ratio using OpenCV face-tracking and burns subtitles in real-time.
+Welcome to **AntiGravity** — a centralized repository of cutting-edge applications, utilities, and experiments created entirely through the power of **Vibe Coding**. 
 
-## 🌟 Features
-
-- **Dynamic Face-Tracking Crop**: Automatically detects the speaker's face and centers the video frame dynamically using OpenCV Haar Cascades, resulting in a perfect 9:16 portrait format for YouTube Shorts, TikTok, or Instagram Reels.
-- **Perfect Audio-Video Synchronization**: Intermediate segments are transcoded with intra-frame-only H.264 settings (`-g 1 -bf 0`) to eliminate OpenCV decoding lag/shift and ensure frame-perfect A/V alignment.
-- **Dazzling Glassmorphic Sunset UI**: A beautiful, responsive light sky-blue background gradient with slowly drifting white clouds, a sunset-orange setting sun, and frosted glass container cards.
-- **YouTube Shorts SEO Metadata**: Automatically generates optimized titles, description descriptions, and hashtag tags, which can be copied directly with a single click.
-- **Fast, Precise Seeking**: Employs FFmpeg input seeking (`-ss` before `-i`) to seek and cut segments instantly.
+Designed and orchestrated by **Anil Babu Samineni**, this repository showcases how human creativity, design aesthetics, and advanced AI agent collaboration (**Antigravity AI**) can co-create production-ready applications at breakneck speed.
 
 ---
 
-## 📸 User Interface Mockup
+## 🛸 What is Vibe Coding?
 
-Below is a mockup of the clean, vibrant sky-blue user interface with frosted glass cards:
-
-![ClipMind UI Screenshot](clipmind_ui_screenshot.png)
-
----
-
-## 🛠️ Architecture
-
-- **Frontend**: Vanilla HTML5, CSS3 (frosted glassmorphism, responsive grids, and transitions), and modern JavaScript (EventSource client for Server-Sent Events progress tracking).
-- **Backend**: FastAPI (Python), utilizing `yt-dlp` for video downloading and `ffmpeg` for precise video trimming.
-- **AI Engine**: Google Gemini 2.5 Flash via the official `google-generativeai` SDK.
+**Vibe Coding** represents a paradigm shift in software development:
+* **The Developer** acts as the high-level architect, UI/UX designer, and systems coordinator, defining the product vision, design language, and behavior.
+* **The AI Agent** handles the boilerplate, unit testing, performance optimization, refactoring, and execution steps, working directly within the codebase.
+* **The Symphony**: By "vibing" together, they build complex systems rapidly, iterating in real-time on visual styles, API structures, and features.
 
 ---
 
-## 📋 System Requirements
+## 🚀 Showcased Projects
 
-To run this application, you need:
+Here is the flagship project featured in this repository:
 
-1. **Python 3.8+**
-2. **ffmpeg** (Required for clipping and audio/video merge)
+| Project | Type | Description | Link |
+| :--- | :--- | :--- | :--- |
+| **ClipMind** 🧠 | AI Video Highlight Extractor | A modern web application that takes a YouTube video link, analyzes its transcripts using **Gemini 1.5 Flash**, and automatically extracts engaging highlight clips (under 60s) perfect for YouTube Shorts. | [View Project](./clipmind) |
 
-### How to Install `ffmpeg` on Windows:
-- Open **PowerShell** as Administrator and run:
-  ```powershell
-  winget install ffmpeg
-  ```
-- Verify installation:
-  ```cmd
-  ffmpeg -version
-  ```
+### 🧠 ClipMind Highlight Preview
+Below is a preview of the **ClipMind** interface, featuring a custom sky-blue, floating cloud, and sunset-orange glassmorphism design:
+
+![ClipMind UI Screenshot](./clipmind/clipmind_ui_screenshot.png)
 
 ---
 
-## 🚀 Quick Start (Windows)
+## 🛠️ The AntiGravity Tech Stack
 
-1. **Start the Backend Server**:
-   - Double-click **`start_all.bat`** in the `clipmind` directory.
-   - This script creates a virtual environment (`venv`), installs all required dependencies (FastAPI, yt-dlp, google-generativeai, opencv-python, pillow, etc.), and starts the Uvicorn server on `http://localhost:8000`.
+The projects in this repository utilize a curated selection of modern, high-performance technologies:
 
-2. **Open the App**:
-   - Locate and double-click `frontend/index.html` to open it in your browser.
-
-3. **Extract Highlights**:
-   - Paste a YouTube URL.
-   - Enter your Gemini API Key.
-   - Click **Extract Clips ✨** and watch the real-time progress stream!
-
----
-
-## 📁 Project Structure & Code Explanations
-
-```
-clipmind/
-│
-├── backend/
-│   ├── .env                 # API Credentials
-│   ├── requirements.txt     # Python Dependencies
-│   ├── main.py              # FastAPI Application & SSE endpoints
-│   ├── analyzer.py          # YouTube Transcript Fetch & Gemini Prompt
-│   ├── clipper.py           # yt-dlp, OpenCV face-tracking, and ffmpeg clipping
-│   └── job_manager.py       # Asynchronous Pipeline coordinator & ASS generator
-│
-├── frontend/
-│   ├── index.html           # Web app UI with animated background blobs
-│   ├── style.css            # Premium Sky-Blue & Sunset Glassmorphism styling
-│   └── app.js               # Frontend controller & EventSource SSE client
-│
-├── start_all.bat            # Automated Windows Startup batch script
-├── clipmind_ui_screenshot.png # UI Screenshot
-└── README.md                # Project documentation
+```mermaid
+graph TD
+    A[User Interface] -->|Glassmorphic HTML5/CSS3| B(Vibe Frontend)
+    B -->|FastAPI EventSource / SSE| C(Python Backend)
+    C -->|Gemini 1.5 Flash API| D(AI Transcript Analyzer)
+    C -->|yt-dlp & FFmpeg| E(Video/Audio Engine)
 ```
 
-### Key Modules:
-- **`backend/clipper.py`**: Handles video downloading and clipping. It uses `get_shot_crop_offsets` to detect shot boundaries and analyze speaker facial positions to center the crop box. It then runs FFmpeg to merge the cropped video with the original audio and burn subtitles.
-- **`backend/analyzer.py`**: Pulls the video transcripts and invokes the Gemini API to detect key highlight segments (keeping clips strictly between 25-58 seconds).
-- **`backend/job_manager.py`**: Manages backend job states and creates dynamic `.ass` subtitle files with word-by-word highlighted text and custom emojis.
-- **`frontend/style.css`**: Provides a premium, light sky-blue theme with frosted glass containers, floating clouds, and sunset-orange accents.
+* **Frontend**: Vanilla HTML5, Custom HSL Tailwind-free CSS, and Modern Vanilla JS (SSE / Server-Sent Events).
+* **Backend**: FastAPI (Python), Uvicorn.
+* **Video Processing**: FFmpeg (with input seeking and keyframe GOP optimization) & OpenCV.
+* **AI & LLM Orchestration**: Google Generative AI (Gemini 1.5 Flash).
 
 ---
 
-Created by **Anil Babu Samineni**.
+## 💻 Setup & Running Projects
+
+Each project lives in its own subdirectory and contains a self-configuring environment setup.
+
+To launch the flagship **ClipMind** project:
+1. Ensure you have **Python 3.8+** and **FFmpeg** installed.
+2. Navigate into the `clipmind` directory:
+   ```cmd
+   cd clipmind
+   ```
+3. Run the automated setup and startup script:
+   ```cmd
+   start_all.bat
+   ```
+4. Open your browser and launch `frontend/index.html` (e.g. via double-clicking or local server).
+
+---
+
+## 🎨 Design Philosophy
+Every application in this repository conforms to strict aesthetic principles:
+1. **Rich Aesthetics**: Custom gradients, soft shadows, and deep frosted-glass blur filters.
+2. **Interactive Motion**: Micro-interactions, slide animations, and floating background blobs.
+3. **No Generic Colors**: Specially curated color palettes (such as sunset oranges, sky blues, and cloud whites) rather than default browser colors.
+4. **Developer Focused**: Built to be fast, responsive, and fun to use.
+
+---
+
+<div align="center">
+
+**Created with 💖 by [Anil Babu Samineni](https://github.com/AnilSami)**  
+*Powered by Vibe Coding & the Antigravity Agent*
+
+</div>
