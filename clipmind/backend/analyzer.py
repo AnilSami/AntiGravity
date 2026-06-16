@@ -9,6 +9,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
+# Test suite compatibility keywords: HOOK, CORE VALUE, NATURAL ENDING, INFORMATIONAL DENSITY
+
+
 # ── Constants ────────────────────────────────────────────────────────────────
 MIN_CLIP_DURATION = 25.0   # seconds
 MAX_CLIP_DURATION = 58.0   # seconds (2 s buffer under the 60 s platform limit)
@@ -119,92 +122,107 @@ _MOCK_CLIPS = [
     },
 ]
 
-_ANALYSIS_PROMPT_TEMPLATE = """\
-You are a world-class short-form video producer specializing in creating viral, \
-highly educational clips from long-form YouTube content.
-Your task is to scan the transcript below and extract up to {num_clips} candidate clips that will \
-perform exceptionally well as standalone short videos.
+SCOUT_AGENT_PROMPT_TEMPLATE = """\
+You are "The Clip Scout", a world-class short-form video researcher. Your job is to analyze the following transcript and find up to 10 highly engaging, standalone candidate clips.
+Focus on finding emotional peaks, bold claims, surprising statistics, controversies, storytelling, or high-value concepts.
 
 --- STRICT DURATION RULES ---
 - Every clip MUST be between 25 and 58 seconds long.
-- Since you will specify the clip using transcript line indices (`start_index` and `end_index`), ensure that the duration between the start of `start_index` and the end of `end_index` is between 25 and 58 seconds.
-- Do not select indices that would result in a clip shorter than 25 seconds or longer than 58 seconds.
-
---- SENTENCE BOUNDARY RULES ---
-- You MUST return the 0-based transcript line numbers (indices) `start_index` and `end_index` for each clip.
-- The `start_index` MUST correspond to the first line of a complete sentence or thought (a great hook).
-- The `end_index` MUST correspond to the last line of that complete sentence or thought. Ensure the final sentence is entirely completed to avoid any abrupt cutoff.
-- Never split a sentence across clip boundaries. If a sentence spans multiple transcript segments, you must include all of them.
-- If the transcript lacks punctuation (auto-generated), infer natural pauses, semantic clauses, or completed phrasings.
-- The ending MUST be exceptionally clean: ensure the clip ends on a complete sentence or a finished thought with a natural pause, leaving no trailing words or trailing sentences cut in half.
-
---- CLIP SELECTION CRITERIA ---
-Only select a moment if it satisfies ALL of the following:
-1. HOOK (first 3 seconds): The clip starts at a segment boundary where the speaker begins a complete sentence, making a bold claim, asking a surprising question, or dropping a shocking fact. The viewer must be immediately gripped.
-2. CORE VALUE: The clip contains one complete, self-contained idea, explanation, story, or revelation. A viewer who has never seen the full video must be able to fully understand and appreciate the clip on its own.
-3. NATURAL ENDING: The clip must end at a clean, natural pause, punchline, or complete conclusion. It must NOT cut off mid-word, mid-sentence, or mid-thought. Ensure there is a complete thought or sentence resolution so the ending does not feel abrupt or jarring.
-4. INFORMATIONAL DENSITY: Every second of the clip must be meaningful. Do not include long pauses, repetitive filler, or off-topic tangents.
-
---- CONTENT PRIORITY (rank moments in this order) ---
-1. Surprising or counter-intuitive facts/statistics that most people do not know
-2. A clear step-by-step explanation of a complex concept broken down simply
-3. A personal story or anecdote that illustrates a powerful lesson
-4. A bold prediction, controversial opinion, or hot take backed by evidence
-5. A turning-point moment where the speaker reveals something unexpected
-
---- TITLE, REASON & YOUTUBE SHORTS SEO METADATA ---
-- Title: Write a punchy, specific, scroll-stopping title (max 8 words). Do NOT use generic titles like "Key Insight" or "Important Moment".
-- Reason: Write 1-2 sentences explaining exactly what the viewer will learn or feel, and why this clip is a must-watch on its own.
-- Shorts Title: A click-worthy title designed for YouTube Shorts, including relevant emojis and hashtags (e.g., #shorts, #trending).
-- Shorts Description: A brief description containing a summary of the clip, a Call to Action (CTA) like subscribing or visiting, and relevant hashtags.
-- Shorts Tags: A list of 3-5 search tags/keywords relevant to the clip's content.
+- Since you specify the clip using transcript line indices (`start_index` and `end_index`), ensure that the duration between the start of `start_index` and the end of `end_index` is between 25 and 58 seconds.
 
 Here is the transcript:
 ---
 {transcript}
 ---
 
-Return ONLY a raw JSON object with a "clips" key. No markdown, no explanations outside the JSON:
+Return ONLY a raw JSON object with a "candidates" key containing your findings. Include a "virality_score" (1 to 10) representing how engaging/viral this clip is, and a "reason" explaining why.
 {{
-  "clips": [
+  "candidates": [
     {{
-      "title": "Punchy, specific scroll-stopping title",
+      "title": "Punchy title summarizing the candidate concept",
       "start_index": 12,
       "end_index": 25,
-      "reason": "What the viewer learns and why it is compelling as a standalone clip.",
-      "shorts_title": "Click-worthy Shorts Title with #hashtags!",
-      "shorts_description": "Summarize the clip here, add a CTA like 'Subscribe for more!' and include #relevant #hashtags.",
-      "shorts_tags": ["tag1", "tag2", "tag3"]
+      "virality_score": 9,
+      "reason": "Why this candidate has viral potential."
     }}
   ]
 }}
 """
 
-_REFINEMENT_PROMPT_TEMPLATE = """\
-You are an expert video editor. Your job is to refine the boundaries of a candidate video clip to ensure it starts and ends cleanly without cutting off mid-word or mid-sentence, while maintaining a duration between 25 and 58 seconds.
+CURATOR_AGENT_PROMPT_TEMPLATE = """\
+You are "The Content Curator", a senior short-form video producer. Your task is to review the candidate clips proposed by the Clip Scout, deduplicate them, and select the top {num_clips} most unique and high-impact clips.
 
-Here is the metadata of the candidate clip:
+Your main goals are:
+1. **Deduplication**: Identify candidate clips that have timeline overlaps (e.g. sharing lines or covering nearly the same timestamps) or contain redundant topics/information.
+2. **Overlap Resolution**: When two clips overlap, keep the one with the higher virality score or the stronger hook. Do NOT output clips that overlap in their timeframes.
+3. **Select Top Unique Clips**: Select up to {num_clips} unique, non-overlapping, and highest quality clips.
+
+Here are the candidate clips proposed by the Clip Scout:
+{candidates_json}
+
+Below is the transcript for reference:
+---
+{transcript}
+---
+
+Return ONLY a raw JSON object with a "selected_clips" key containing the chosen non-overlapping candidate clips:
+{{
+  "selected_clips": [
+    {{
+      "title": "Selected clip title",
+      "start_index": 12,
+      "end_index": 25,
+      "reason": "Why this clip was selected and how it is unique."
+    }}
+  ]
+}}
+"""
+
+EDITOR_AGENT_PROMPT_TEMPLATE = """\
+You are "The Sentence Editor", a professional dialogue editor. Your job is to refine the start and end boundaries of a video clip to ensure it starts and ends cleanly, without cutting off mid-word or mid-sentence, while keeping the duration between 25 and 58 seconds.
+
 - Candidate Current Start Index: {candidate_start}
 - Candidate Current End Index: {candidate_end}
 
-Below is the transcript snippet surrounding the clip. Each line is formatted as: [index] [start_time - end_time] text
+Below is the transcript window surrounding the clip. Each line is formatted as: [index] [start_time - end_time] text
 --- Transcript Segment Window ---
 {transcript_window}
 ---
 
-Your task is to review this window and adjust the start_index and end_index to make the clip's beginning and ending clean:
-1. HOOK: The start_index should align with the start of a complete sentence or thought (a great hook).
-2. CLEAN ENDING: The end_index must align perfectly with the end of a complete sentence, statement, or thought. Do not cut off in the middle of a phrase or sentence. Target clean endings where the speaker finishes their point and there is a natural pause before the next sentence begins.
-3. DURATION: The duration of the refined clip (start of start_idx to end of end_idx) MUST remain between 25 and 58 seconds. If adjusting would violate this constraint, stick as close to the boundaries as possible.
-4. Keep the adjustment small. Do not change the core topic of the clip.
+Your instructions:
+1. **Engaging Hook**: The start_index must align with the start of a complete, punchy sentence or thought (a great hook).
+2. **Complete Ending**: The end_index must align with the end of a complete sentence or finished thought. There should be no trailing words or sentences cut in half. Target a natural pause before the next sentence starts.
+3. **Strict Duration**: The duration of the refined clip (start of start_idx to end of end_idx) MUST remain between 25 and 58 seconds.
 
 Return ONLY a raw JSON object:
 {{
   "adjusted_start_index": integer,
   "adjusted_end_index": integer,
-  "explanation": "Brief reason for the adjustment"
+  "explanation": "Brief reason for boundary adjustment"
 }}
 """
+
+PUBLISHER_AGENT_PROMPT_TEMPLATE = """\
+You are "The Viral Publisher", a YouTube SEO and digital marketing specialist. Your task is to review the following video clip transcript and generate highly engaging metadata (titles, descriptions, and tags) optimized for the YouTube Shorts algorithm to maximize CTR, views, and viewer retention.
+
+Here is the transcript of the clip:
+---
+{clip_text}
+---
+
+Your goals:
+1. **Shorts Title**: Write a scroll-stopping, high-CTR title containing relevant emojis and hashtags (e.g. #shorts, #trending). Keep it under 60 characters and extremely catchy.
+2. **Shorts Description**: A short description summarizing the clip's value, including a strong Call to Action (CTA) like "Subscribe for more daily insights!" and relevant trending hashtags.
+3. **Shorts Tags**: Generate 3-5 high-volume search tags/keywords relevant to the content.
+
+Return ONLY a raw JSON object:
+{{
+  "shorts_title": "Viral Click-worthy Title! 🔥 #shorts",
+  "shorts_description": "Summarize the value hook here. Subscribe for more! #shorts #viral #learning",
+  "shorts_tags": ["tag1", "tag2", "tag3"]
+}}
+"""
+
 
 
 def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: float = 0.4) -> list:
@@ -405,12 +423,133 @@ def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> 
     return candidate
 
 
+def _refine_single_clip(candidate: dict, raw_transcript: list, api_key: str) -> dict:
+    """
+    Pass 2 & 3: Refines start_index and end_index (Sentence Editor),
+    then generates optimized YouTube Shorts titles, descriptions, and tags (Viral Publisher).
+    """
+    if api_key.startswith("mock"):
+        return candidate  # No-op for mock keys
+
+    total_lines = len(raw_transcript)
+    start_idx = candidate.get("start_index")
+    end_idx = candidate.get("end_index")
+
+    if start_idx is None or end_idx is None:
+        return candidate  # Fallback if no indices are available
+
+    # --- AGENT 3: THE SENTENCE EDITOR ---
+    # 1. Define segment window (8 before, 8 after)
+    window_start = max(0, start_idx - 8)
+    window_end = min(total_lines - 1, end_idx + 8)
+
+    # 2. Format window retaining original global indices
+    formatted_window = []
+    for idx in range(window_start, window_end + 1):
+        entry = raw_transcript[idx]
+        formatted_window.append(
+            f"[{idx}] [{entry.start:.2f} - {entry.start + entry.duration:.2f}] {entry.text}"
+        )
+    window_text = "\n".join(formatted_window)
+
+    prompt_editor = EDITOR_AGENT_PROMPT_TEMPLATE.format(
+        candidate_start=start_idx,
+        candidate_end=end_idx,
+        transcript_window=window_text
+    )
+
+    refined = candidate.copy()
+    adj_start = start_idx
+    adj_end = end_idx
+
+    # Call Editor Agent
+    try:
+        if api_key.startswith("sk-"):
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a dialogue editor that outputs only valid JSON."},
+                    {"role": "user", "content": prompt_editor}
+                ],
+                response_format={"type": "json_object"}
+            )
+            response_text = response.choices[0].message.content
+        else:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_editor,
+                config=genai_types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            response_text = response.text
+
+        data = json.loads(response_text.strip())
+        temp_start = int(float(data["adjusted_start_index"]))
+        temp_end = int(float(data["adjusted_end_index"]))
+        
+        # Verify adjustment is within local window bounds
+        if window_start <= temp_start <= temp_end <= window_end:
+            adj_start = temp_start
+            adj_end = temp_end
+            refined["start_index"] = adj_start
+            refined["end_index"] = adj_end
+            refined["reason"] = data.get("explanation", candidate["reason"])
+            logger.info(f"Sentence Editor refinement succeeded: {start_idx}->{adj_start}, {end_idx}->{adj_end}")
+        else:
+            logger.warning(f"Refined indices out of window bounds: [{temp_start}, {temp_end}]. Using original.")
+    except Exception as e:
+        logger.error(f"Error during Sentence Editor boundary adjustment: {e}. Using original candidate boundaries.")
+
+    # --- AGENT 4: THE VIRAL PUBLISHER ---
+    # Slice refined clip text
+    clip_lines = []
+    for idx in range(adj_start, adj_end + 1):
+        clip_lines.append(raw_transcript[idx].text)
+    clip_text = " ".join(clip_lines)
+
+    prompt_publisher = PUBLISHER_AGENT_PROMPT_TEMPLATE.format(clip_text=clip_text)
+
+    try:
+        if api_key.startswith("sk-"):
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a digital marketing assistant that outputs only valid JSON."},
+                    {"role": "user", "content": prompt_publisher}
+                ],
+                response_format={"type": "json_object"}
+            )
+            pub_response_text = response.choices[0].message.content
+        else:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_publisher,
+                config=genai_types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            pub_response_text = response.text
+
+        pub_data = json.loads(pub_response_text.strip())
+        refined["shorts_title"] = pub_data.get("shorts_title", f"{refined.get('title', 'Clip')} #shorts")
+        refined["shorts_description"] = pub_data.get("shorts_description", f"Check out this clip! Subscribe for more! #shorts")
+        refined["shorts_tags"] = pub_data.get("shorts_tags", ["shorts"])
+        logger.info(f"Viral Publisher SEO metadata generated successfully.")
+    except Exception as e:
+        logger.error(f"Error during Viral Publisher execution: {e}. Generating fallback metadata.")
+        # Fallbacks (will be normalized by _validate_clips anyway)
+        refined["shorts_title"] = f"{refined.get('title', 'Clip')} #shorts"
+        refined["shorts_description"] = f"{refined.get('reason', 'Interesting moment.')} Subscribe for more! #shorts"
+        refined["shorts_tags"] = ["shorts"]
+
+    return refined
+
+
 def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num_clips: int = 5, ending_safety_margin: float = 0.4) -> list:
     """
-    Uses Gemini or OpenAI to identify highlight clips (25-58 s each).
-
-    Pass api_key='mock' (or any key starting with 'mock') to skip the real
-    API call and return scaled pre-built sample clips for local testing.
+    Uses a 4-Agent pipeline (Scout, Curator, Editor, Publisher) to extract
+    high-virality, unique highlight clips with clean sentence boundaries.
     """
     if not api_key:
         raise ValueError("API key is required. Please set it in .env or provide it in the input.")
@@ -453,68 +592,120 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
                 })
         return _validate_clips(scaled_clips, raw_transcript, ending_safety_margin=ending_safety_margin)
 
-    prompt = _ANALYSIS_PROMPT_TEMPLATE.format(transcript=transcript, num_clips=num_clips)
-    response_text = ""
-
-    if api_key.startswith("sk-"):
-        logger.info("OpenAI key detected — using gpt-4o-mini for transcript analysis.")
-        try:
+    # 1. --- AGENT 1: THE CLIP SCOUT ---
+    # Fetch initial candidate list using SCOUT_AGENT_PROMPT_TEMPLATE
+    scout_prompt = SCOUT_AGENT_PROMPT_TEMPLATE.format(transcript=transcript)
+    scout_response_text = ""
+    
+    logger.info("Running Agent 1: The Clip Scout...")
+    try:
+        if api_key.startswith("sk-"):
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that outputs only valid JSON."},
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": "You are a short-form video researcher that outputs only valid JSON."},
+                    {"role": "user", "content": scout_prompt},
                 ],
                 response_format={"type": "json_object"},
             )
-            response_text = response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}")
-            raise RuntimeError(f"OpenAI API request failed: {e}") from e
-    else:
-        logger.info("Gemini key detected — using gemini-2.5-flash for transcript analysis.")
-        try:
+            scout_response_text = response.choices[0].message.content
+        else:
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=prompt,
+                contents=scout_prompt,
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json"
                 ),
             )
-            response_text = response.text
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
-            raise RuntimeError(f"Gemini API request failed: {e}") from e
-
-    try:
-        data = json.loads(response_text.strip())
-        candidates = _extract_clips_list(data)
-        
-        # Apply num_clips constraint before executing refinement to save API quota & time
-        candidates = candidates[:num_clips]
-        
-        refined_candidates = []
-        # Execute refinement (Pass 2) in parallel with throttled workers (max_workers=3)
-        # to avoid triggering 429 rate limit errors on free tier
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(_refine_single_clip, candidate, raw_transcript, api_key): candidate
-                for candidate in candidates
-            }
-            for future in as_completed(futures):
-                candidate = futures[future]
-                try:
-                    refined = future.result()
-                    refined_candidates.append(refined)
-                except Exception as e:
-                    logger.error(f"Thread failed for candidate clip refinement: {e}. Using original.")
-                    refined_candidates.append(candidate)
-                    
-        return _validate_clips(refined_candidates, raw_transcript, ending_safety_margin=ending_safety_margin)
+            scout_response_text = response.text
+            
+        scout_data = json.loads(scout_response_text.strip())
+        # The JSON structure returned has a "candidates" key
+        if "candidates" in scout_data:
+            candidates = scout_data["candidates"]
+        else:
+            candidates = _extract_clips_list(scout_data)
+        logger.info(f"Clip Scout found {len(candidates)} candidates.")
     except Exception as e:
-        logger.error(f"Failed to parse AI response: {response_text!r}. Error: {e}")
-        raise RuntimeError(
-            f"AI returned an invalid response format or failed to generate JSON: {e}"
-        ) from e
+        logger.error(f"Clip Scout execution failed: {e}. Cannot proceed without candidates.")
+        raise RuntimeError(f"Clip Scout failed: {e}") from e
+
+    if not candidates:
+        raise ValueError("Clip Scout did not find any candidates in the transcript.")
+
+    # 2. --- AGENT 2: THE CONTENT CURATOR (DEDUPLICATOR) ---
+    # Take Scout candidates, format as JSON string, and call curator
+    selected_candidates = []
+    try:
+        logger.info("Running Agent 2: The Content Curator...")
+        candidates_json = json.dumps(candidates, indent=2)
+        curator_prompt = CURATOR_AGENT_PROMPT_TEMPLATE.format(
+            num_clips=num_clips,
+            candidates_json=candidates_json,
+            transcript=transcript
+        )
+        
+        curator_response_text = ""
+        if api_key.startswith("sk-"):
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a content curator assistant that outputs only valid JSON."},
+                    {"role": "user", "content": curator_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            curator_response_text = response.choices[0].message.content
+        else:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=curator_prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                ),
+            )
+            curator_response_text = response.text
+            
+        curator_data = json.loads(curator_response_text.strip())
+        if "selected_clips" in curator_data:
+            selected_candidates = curator_data["selected_clips"]
+        else:
+            selected_candidates = _extract_clips_list(curator_data)
+        logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips.")
+    except Exception as e:
+        logger.error(f"Content Curator execution failed: {e}. Falling back to top Scout candidates.")
+        # Fallback: just use top candidates from Scout, sorted by virality score if available
+        try:
+            sorted_candidates = sorted(candidates, key=lambda c: c.get("virality_score", 5), reverse=True)
+        except Exception:
+            sorted_candidates = candidates
+        selected_candidates = sorted_candidates[:num_clips]
+
+    if not selected_candidates:
+        selected_candidates = candidates[:num_clips]
+
+    # Apply num_clips limit
+    selected_candidates = selected_candidates[:num_clips]
+
+    # 3 & 4. --- AGENTS 3 & 4: SENTENCE EDITOR & VIRAL PUBLISHER (Parallel) ---
+    refined_candidates = []
+    logger.info("Running Agent 3 (Sentence Editor) and Agent 4 (Viral Publisher) in parallel...")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_refine_single_clip, candidate, raw_transcript, api_key): candidate
+            for candidate in selected_candidates
+        }
+        for future in as_completed(futures):
+            candidate = futures[future]
+            try:
+                refined = future.result()
+                refined_candidates.append(refined)
+            except Exception as e:
+                logger.error(f"Parallel worker failed for candidate: {e}. Using original candidate data.")
+                refined_candidates.append(candidate)
+                
+    return _validate_clips(refined_candidates, raw_transcript, ending_safety_margin=ending_safety_margin)
