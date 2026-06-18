@@ -1,0 +1,21 @@
+# Task Checklist - Duplicate and Overlap Prevention
+
+- [x] **Phase 1: Root Cause Investigation**
+  - [x] Audit the clip generation pipeline for duplication sources
+  - [x] Identify critical code points (`_validate_clips`, curator fallback, parallel expansions, duplicate job requests)
+- [x] **Phase 2: Reproduction**
+  - [x] Run baseline tests to measure duplication and overlap rate
+- [x] **Phase 3: Fix Design**
+  - [x] Select optimal overlap resolution strategy (discard lower-score clips)
+  - [x] Select semantic deduplication method (Jaccard similarity with >60% threshold)
+  - [x] Design thread-safe job caching mapping URLs to Job IDs
+- [x] **Phase 4: Implementation**
+  - [x] Modify `_validate_clips` in [analyzer.py](file:///d:/Desktop/LLM/backend/analyzer.py) to discard timeline overlaps
+  - [x] Implement Jaccard similarity pruning in `_validate_clips`
+  - [x] Add fallback programmatic deduplication safety net in `analyze_with_gemini`
+  - [x] Implement thread-safe job caching and cache cleanup in [main.py](file:///d:/Desktop/LLM/backend/main.py)
+- [x] **Phase 5: QA Hardening**
+  - [x] Create aggressive test suite [test_duplication.py](file:///d:/Desktop/LLM/backend/test_duplication.py)
+  - [x] Verify short video clamping, long video pruning, and concurrent requests
+  - [x] Fix mock parameter names in the test suite
+  - [x] Run regression and unit tests successfully (100% pass rate)
