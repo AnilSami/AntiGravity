@@ -540,7 +540,16 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
     if any("mock" in str(c.get("title", "")).lower() for c in valid_clips):
         return valid_clips
 
-    # 1. Add priority score and transcript index set for sorting and similarity checks
+    def _get_word_set(text: str) -> set:
+        if not text:
+            return set()
+        # Remove hashtags and punctuation, lowercase
+        cleaned = re.sub(r'#[a-zA-Z0-9_-]+', '', text)
+        words = re.findall(r'\b\w+\b', cleaned.lower())
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'on', 'at', 'by', 'this', 'that', 'it', 'for', 'with', 'as'}
+        return {w for w in words if w not in stop_words}
+
+    # 1. Add priority score, transcript index set, and text word sets for sorting and similarity checks
     for idx, c in enumerate(valid_clips):
         orig_item = clips_list[idx]
         try:
@@ -553,6 +562,14 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
         c["_priority"] = v_score if v_score > 0.0 else (c["end_time"] - c["start_time"])
         # Set of transcript line indices covered by this clip
         c["_line_set"] = set(range(c["start_index"], c["end_index"] + 1))
+        
+        # Extract full transcript text for text Jaccard similarity
+        clip_lines = []
+        for line_idx in range(c["start_index"], min(c["end_index"] + 1, len(transcript))):
+            clip_lines.append(transcript[line_idx].text)
+        clip_text = " ".join(clip_lines)
+        c["_word_set"] = _get_word_set(clip_text)
+        c["_hook_set"] = _get_word_set(c.get("shorts_title", "") + " " + c.get("title", ""))
 
     # Sort validated clips by priority descending (highest priority/virality score first)
     valid_clips.sort(key=lambda x: x["_priority"], reverse=True)
@@ -564,11 +581,15 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
         cand_start = candidate["start_time"]
         cand_end = candidate["end_time"]
         cand_lines = candidate["_line_set"]
+        cand_words = candidate["_word_set"]
+        cand_hooks = candidate["_hook_set"]
         
         for accepted in deduplicated_clips:
             acc_start = accepted["start_time"]
             acc_end = accepted["end_time"]
             acc_lines = accepted["_line_set"]
+            acc_words = accepted["_word_set"]
+            acc_hooks = accepted["_hook_set"]
             
             # Check 1: Temporal Overlap (Discard lower-scored overlapping clip)
             overlap_duration = max(0.0, min(cand_end, acc_end) - max(cand_start, acc_start))
@@ -580,15 +601,41 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
                 keep = False
                 break
                 
-            # Check 2: Semantic Similarity (Jaccard similarity threshold of 60%)
+            # Check 2: Index-level Semantic Similarity (Jaccard similarity threshold of 60%)
             if cand_lines and acc_lines:
                 intersection_size = len(cand_lines.intersection(acc_lines))
                 union_size = len(cand_lines.union(acc_lines))
                 jaccard = intersection_size / union_size if union_size > 0 else 0.0
                 if jaccard > 0.6:  # CEO Directive: > 60%
                     logger.info(
-                        f"Discarding clip '{candidate['title']}' due to semantic redundancy (Jaccard similarity "
+                        f"Discarding clip '{candidate['title']}' due to index redundancy (Jaccard similarity "
                         f"{jaccard*100:.1f}% > 60%) with higher-priority clip '{accepted['title']}'."
+                    )
+                    keep = False
+                    break
+
+            # Check 3: Text-level Semantic Similarity (Identical transcript sections/repetitive speaker)
+            if cand_words and acc_words:
+                intersection_words = len(cand_words.intersection(acc_words))
+                union_words = len(cand_words.union(acc_words))
+                text_jaccard = intersection_words / union_words if union_words > 0 else 0.0
+                if text_jaccard > 0.6:
+                    logger.info(
+                        f"Discarding clip '{candidate['title']}' due to text-level semantic redundancy (Jaccard similarity "
+                        f"{text_jaccard*100:.1f}% > 60%) with higher-priority clip '{accepted['title']}'."
+                    )
+                    keep = False
+                    break
+
+            # Check 4: Hook/Title Concept Redundancy
+            if cand_hooks and acc_hooks:
+                intersection_hooks = len(cand_hooks.intersection(acc_hooks))
+                union_hooks = len(acc_hooks.union(acc_hooks))
+                hook_jaccard = intersection_hooks / union_hooks if union_hooks > 0 else 0.0
+                if hook_jaccard > 0.6:
+                    logger.info(
+                        f"Discarding clip '{candidate['title']}' due to hook concept redundancy (Jaccard similarity "
+                        f"{hook_jaccard*100:.1f}% > 60%) with higher-priority clip '{accepted['title']}'."
                     )
                     keep = False
                     break
@@ -600,6 +647,8 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
     for c in deduplicated_clips:
         c.pop("_priority", None)
         c.pop("_line_set", None)
+        c.pop("_word_set", None)
+        c.pop("_hook_set", None)
         
     # Sort final clips chronologically by start_time
     deduplicated_clips.sort(key=lambda x: x["start_time"])
