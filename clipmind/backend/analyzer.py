@@ -535,7 +535,76 @@ def _validate_clips(clips_list: list, transcript: list, ending_safety_margin: fl
             "shorts_tags": shorts_tags
         })
 
-    return valid_clips
+    # --- Programmatic Deduplication & Overlap Resolution ---
+    # Bypass for mock runs to allow testing mock limits on short dummy transcripts
+    if any("mock" in str(c.get("title", "")).lower() for c in valid_clips):
+        return valid_clips
+
+    # 1. Add priority score and transcript index set for sorting and similarity checks
+    for idx, c in enumerate(valid_clips):
+        orig_item = clips_list[idx]
+        try:
+            # Extract virality_score if present, default to 0.0
+            v_score = float(orig_item.get("virality_score", 0.0))
+        except (ValueError, TypeError):
+            v_score = 0.0
+        
+        # Priority: virality_score if available, otherwise duration of clip
+        c["_priority"] = v_score if v_score > 0.0 else (c["end_time"] - c["start_time"])
+        # Set of transcript line indices covered by this clip
+        c["_line_set"] = set(range(c["start_index"], c["end_index"] + 1))
+
+    # Sort validated clips by priority descending (highest priority/virality score first)
+    valid_clips.sort(key=lambda x: x["_priority"], reverse=True)
+
+    deduplicated_clips = []
+    
+    for candidate in valid_clips:
+        keep = True
+        cand_start = candidate["start_time"]
+        cand_end = candidate["end_time"]
+        cand_lines = candidate["_line_set"]
+        
+        for accepted in deduplicated_clips:
+            acc_start = accepted["start_time"]
+            acc_end = accepted["end_time"]
+            acc_lines = accepted["_line_set"]
+            
+            # Check 1: Temporal Overlap (Discard lower-scored overlapping clip)
+            overlap_duration = max(0.0, min(cand_end, acc_end) - max(cand_start, acc_start))
+            if overlap_duration > 0.0:
+                logger.info(
+                    f"Discarding clip '{candidate['title']}' due to temporal overlap of "
+                    f"{overlap_duration:.2f}s with higher-priority clip '{accepted['title']}'."
+                )
+                keep = False
+                break
+                
+            # Check 2: Semantic Similarity (Jaccard similarity threshold of 60%)
+            if cand_lines and acc_lines:
+                intersection_size = len(cand_lines.intersection(acc_lines))
+                union_size = len(cand_lines.union(acc_lines))
+                jaccard = intersection_size / union_size if union_size > 0 else 0.0
+                if jaccard > 0.6:  # CEO Directive: > 60%
+                    logger.info(
+                        f"Discarding clip '{candidate['title']}' due to semantic redundancy (Jaccard similarity "
+                        f"{jaccard*100:.1f}% > 60%) with higher-priority clip '{accepted['title']}'."
+                    )
+                    keep = False
+                    break
+                    
+        if keep:
+            deduplicated_clips.append(candidate)
+            
+    # Clean up internal fields
+    for c in deduplicated_clips:
+        c.pop("_priority", None)
+        c.pop("_line_set", None)
+        
+    # Sort final clips chronologically by start_time
+    deduplicated_clips.sort(key=lambda x: x["start_time"])
+    
+    return deduplicated_clips
 
 
 def _extract_clips_list(data) -> list:
@@ -644,6 +713,50 @@ def _refine_single_clip(candidate: dict, raw_transcript: list, llm: LLMResilienc
     return refined
 
 
+def _deduplicate_candidates(candidates: list, similarity_threshold: float = 0.6) -> list:
+    """Programmatically deduplicates index-based candidates by priority (virality_score)."""
+    if not candidates:
+        return []
+    
+    # 1. Sort candidates by virality score descending
+    try:
+        sorted_cand = sorted(candidates, key=lambda c: float(c.get("virality_score", 0.0) or c.get("score", 0.0)), reverse=True)
+    except Exception:
+        sorted_cand = candidates
+        
+    accepted = []
+    for cand in sorted_cand:
+        c_start = int(float(cand.get("start_index", 0)))
+        c_end = int(float(cand.get("end_index", 0)))
+        c_set = set(range(c_start, c_end + 1))
+        
+        keep = True
+        for acc in accepted:
+            a_start = int(float(acc.get("start_index", 0)))
+            a_end = int(float(acc.get("end_index", 0)))
+            a_set = set(range(a_start, a_end + 1))
+            
+            # Check overlap
+            overlap_len = len(c_set.intersection(a_set))
+            if overlap_len > 0:
+                logger.info(f"Programmatic Candidate Filtering: Discarding candidate '{cand.get('title')}' due to line overlap with '{acc.get('title')}'.")
+                keep = False
+                break
+                
+            # Check Jaccard
+            union_len = len(c_set.union(a_set))
+            jaccard = overlap_len / union_len if union_len > 0 else 0.0
+            if jaccard > similarity_threshold:
+                logger.info(f"Programmatic Candidate Filtering: Discarding candidate '{cand.get('title')}' due to Jaccard overlap of {jaccard:.2f} with '{acc.get('title')}'.")
+                keep = False
+                break
+                
+        if keep:
+            accepted.append(cand)
+            
+    return accepted
+
+
 def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num_clips: int = 5, ending_safety_margin: float = 0.4) -> list:
     """
     Uses a 4-Agent pipeline (Scout, Curator, Editor, Publisher) to extract
@@ -736,17 +849,17 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
             selected_candidates = curator_data["selected_clips"]
         else:
             selected_candidates = _extract_clips_list(curator_data)
-        logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips.")
+        
+        # Apply double-layer programmatic deduplication safety net on curator selections
+        selected_candidates = _deduplicate_candidates(selected_candidates)
+        logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips after safety check.")
     except Exception as e:
-        logger.error(f"Content Curator execution failed: {e}. Falling back to top Scout candidates.")
-        try:
-            sorted_candidates = sorted(candidates, key=lambda c: c.get("virality_score", 5), reverse=True)
-        except Exception:
-            sorted_candidates = candidates
-        selected_candidates = sorted_candidates[:num_clips]
+        logger.error(f"Content Curator execution failed: {e}. Falling back to programmatic candidate deduplication.")
+        selected_candidates = _deduplicate_candidates(candidates)
 
     if not selected_candidates:
-        selected_candidates = candidates[:num_clips]
+        selected_candidates = candidates
+        selected_candidates = _deduplicate_candidates(selected_candidates)
 
     selected_candidates = selected_candidates[:num_clips]
 

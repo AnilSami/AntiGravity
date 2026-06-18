@@ -24,6 +24,10 @@ logger = logging.getLogger("main")
 # Load environment variables from .env file
 load_dotenv()
 
+# Thread-safe in-memory cache mapping YouTube URLs to job IDs
+url_to_job_id = {}
+cache_lock = asyncio.Lock()
+
 
 async def cleanup_old_jobs():
     """Background task to delete old jobs and clip folders (older than 1 hour) to save disk space."""
@@ -43,7 +47,11 @@ async def cleanup_old_jobs():
             
             if is_old:
                 jobs.pop(job_id, None)
-                logger.info(f"Purged old job {job_id} from memory.")
+                # Evict from URL cache
+                for url, j_id in list(url_to_job_id.items()):
+                    if j_id == job_id:
+                        url_to_job_id.pop(url, None)
+                logger.info(f"Purged old job {job_id} from memory and cache.")
 
         # 2. Clean up old or orphaned clip folders on disk
         output_dir = "output"
@@ -117,22 +125,34 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
             detail="API Key is missing. Please provide a Gemini or OpenAI key in the input field or set GEMINI_API_KEY/OPENAI_API_KEY in .env."
         )
 
-    job_id = str(uuid.uuid4())
-    logger.info(f"Queuing job {job_id} for URL: {request.url}")
-
-    # Initialize job status
-    jobs[job_id] = JobStatus(
-        id=job_id,
-        status="pending",
-        progress=0,
-        message="Initializing job...",
-        created_at=time.time()
-    )
-
     if request.num_clips < 1 or request.num_clips > 10:
         raise HTTPException(
             status_code=400,
             detail="Number of clips must be between 1 and 10."
+        )
+
+    async with cache_lock:
+        normalized_url = request.url.strip()
+        existing_job_id = url_to_job_id.get(normalized_url)
+        if existing_job_id:
+            existing_job = jobs.get(existing_job_id)
+            if existing_job and existing_job.status not in ["failed"]:
+                logger.info(f"Reusing existing job {existing_job_id} for URL: {normalized_url}")
+                return {"job_id": existing_job_id}
+            else:
+                url_to_job_id.pop(normalized_url, None)
+
+        job_id = str(uuid.uuid4())
+        url_to_job_id[normalized_url] = job_id
+        logger.info(f"Queuing new job {job_id} for URL: {normalized_url}")
+
+        # Initialize job status
+        jobs[job_id] = JobStatus(
+            id=job_id,
+            status="pending",
+            progress=0,
+            message="Initializing job...",
+            created_at=time.time()
         )
 
     # Launch processing in background
