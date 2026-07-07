@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  clipmind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clipmind-container
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist video cache, database, and clip output directories on host
+      - ./output:/app/backend/output
+    environment:
+      - APP_ENV=production
+      # - GEMINI_API_KEY=your_key_here
+      # - ENCRYPTION_KEY=your_fernet_key_here
+      # - YOUTUBE_CLIENT_ID=your_id_here
+      # - YOUTUBE_CLIENT_SECRET=your_secret_here
+      # - ALLOWED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/youtube/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

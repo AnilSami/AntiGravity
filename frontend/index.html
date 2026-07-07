@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipMind - AI YouTube Clip Extractor</title>
+    <meta name="description" content="Extract the most interesting, peak moments from any YouTube video in seconds using AI transcript analysis.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Animated Background Blobs at Corners -->
+    <div class="blob blob-tl"></div>
+    <div class="blob blob-tr"></div>
+    <div class="blob blob-bl"></div>
+    <div class="blob blob-br"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1 class="logo-text">Clip<span>Mind</span></h1>
+            <p class="subtitle">Extract the best moments from any YouTube video using AI</p>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="extractor-tab">Moments Extractor 🎬</button>
+            <button class="tab-btn" data-tab="experiment-tab">A/B Experiments 📊</button>
+            <button class="tab-btn" data-tab="youtube-tab">YouTube Learning Loop 🔁</button>
+        </nav>
+
+        <!-- Main Workspace -->
+        <main>
+            <!-- Extractor Tab Content -->
+            <div id="extractor-tab" class="tab-content">
+                <!-- Form Card -->
+                <section class="card form-card">
+                    <form id="extractor-form">
+                        <!-- YouTube URL Input -->
+                        <div class="input-group">
+                            <label for="youtube-url">YouTube Video URL</label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">🔗</span>
+                                <input 
+                                    type="url" 
+                                    id="youtube-url" 
+                                    placeholder="Paste YouTube link (e.g. https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
+                                    required
+                                >
+                            </div>
+                        </div>
+
+
+
+                        <!-- Advanced Settings Collapsible -->
+                        <details class="advanced-settings">
+                            <summary>Advanced Settings ⚙️</summary>
+                            <div class="advanced-content">
+                                <!-- Subtitle Style Input -->
+                                <div class="input-group">
+                                    <label for="subtitle-style">Subtitle Style</label>
+                                    <div class="input-wrapper">
+                                        <span class="input-icon">📝</span>
+                                        <select id="subtitle-style" style="width: 100%; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-color); background-color: var(--card-bg); color: var(--text-color); cursor: pointer; outline: none;">
+                                            <option value="auto">Auto ⭐ (Recommended)</option>
+                                            <option value="classic">Classic</option>
+                                            <option value="kinetic" selected>Kinetic</option>
+                                            <option value="karaoke">Karaoke</option>
+                                        </select>
+                                    </div>
+                                    <p class="input-hint">Choose how subtitles are styled and animated.</p>
+                                </div>
+
+                                <!-- Creator Preset Input -->
+                                <div class="input-group">
+                                    <label for="creator-preset">Creator Preset</label>
+                                    <div class="input-wrapper">
+                                        <span class="input-icon">🎨</span>
+                                        <select id="creator-preset" style="width: 100%; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-color); background-color: var(--card-bg); color: var(--text-color); cursor: pointer; outline: none;">
+                                            <option value="custom">Custom / Default</option>
+                                            <option value="hormozi" selected>Alex Hormozi Style</option>
+                                            <option value="abdaal">Ali Abdaal Style</option>
+                                            <option value="ceo">Diary of a CEO Style</option>
+                                            <option value="minimal">Minimal Style</option>
+                                        </select>
+                                    </div>
+                                    <p class="input-hint">Automatically configure font, colors, and layout presets.</p>
+                                </div>
+
+                                <!-- API Key Input -->
+                                <div class="input-group">
+                                    <label for="api-key">API Key (Gemini or OpenAI)</label>
+                                    <div class="input-wrapper">
+                                        <span class="input-icon">🔑</span>
+                                        <input 
+                                            type="password" 
+                                            id="api-key" 
+                                            placeholder="Enter Gemini or OpenAI API Key (Optional if configured on backend)"
+                                        >
+                                        <button type="button" id="toggle-key-visibility" class="btn-icon">👁️</button>
+                                    </div>
+                                    <div id="key-badge-container" class="badge-container hidden">
+                                        <span id="key-type-badge" class="badge"></span>
+                                    </div>
+                                    <p class="input-hint">Your API Key is saved locally and sent only to the backend server.</p>
+                                </div>
+
+                                <!-- Target Number of Clips Dropdown -->
+                                <div class="input-group" style="margin-top: 1rem;">
+                                    <label for="num-clips" style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem; font-weight: 500; font-family: var(--font-sans);">
+                                        Target Number of Clips:
+                                    </label>
+                                    <select id="num-clips" style="width: 100%; padding: 0.75rem; border-radius: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.05); color: #fff; outline: none; font-family: var(--font-sans);">
+                                        <option value="1" selected>1 Clip (Credit Saver) 💎</option>
+                                        <option value="3">3 Clips (Balanced) ⚖️</option>
+                                        <option value="5">5 Clips (Standard) 🎬</option>
+                                        <option value="dynamic">Dynamic (Extract all passing moments) 🚀</option>
+                                    </select>
+                                    <p class="input-hint">Selecting fewer clips limits API processing calls and reduces costs dramatically.</p>
+                                </div>
+
+                                <!-- Camera Tracking Debug Option -->
+                                <div class="input-group checkbox-group" style="margin-top: 1rem; margin-bottom: 0;">
+                                    <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; text-transform: none; font-size: 0.9rem; font-weight: 500; font-family: var(--font-sans); letter-spacing: normal;">
+                                        <input type="checkbox" id="debug-camera-tracking" style="width: auto; height: auto; margin-right: 0.25rem;">
+                                        Enable Camera Tracking Debug Overlay & Videos 📹
+                                    </label>
+                                </div>
+
+                                <!-- Force Fresh Analysis Option -->
+                                <div class="input-group checkbox-group" style="margin-top: 0.75rem; margin-bottom: 0;">
+                                    <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; text-transform: none; font-size: 0.9rem; font-weight: 500; font-family: var(--font-sans); letter-spacing: normal;">
+                                        <input type="checkbox" id="force-refresh" style="width: auto; height: auto; margin-right: 0.25rem;">
+                                        Force Fresh Analysis (Bypass Cache) 🔄
+                                    </label>
+                                </div>
+
+                                <!-- Bypass Camera QA Option -->
+                                <div class="input-group checkbox-group" style="margin-top: 0.75rem; margin-bottom: 0;">
+                                    <label class="checkbox-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; text-transform: none; font-size: 0.9rem; font-weight: 500; font-family: var(--font-sans); letter-spacing: normal;">
+                                        <input type="checkbox" id="bypass-camera-qa" style="width: auto; height: auto; margin-right: 0.25rem;">
+                                        Bypass Camera QA (Skip Face/Motion Checks) ⚠️
+                                    </label>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- Action Button -->
+                        <button type="submit" id="submit-btn" class="btn btn-primary">
+                            <span class="btn-text">Generate Shorts ✨</span>
+                            <div class="spinner hidden"></div>
+                        </button>
+                    </form>
+                </section>
+
+                <!-- Error Banner -->
+                <section id="error-container" class="card error-card hidden">
+                    <div class="error-header">
+                        <span class="error-icon">⚠️</span>
+                        <h3>Something went wrong</h3>
+                    </div>
+                    <p id="error-message"></p>
+                    <div class="error-actions">
+                        <button id="error-dismiss-btn" class="btn btn-secondary btn-small">Dismiss</button>
+                        <button id="try-mock-btn" class="btn btn-primary btn-small hidden">Try Mock Mode 🚀</button>
+                    </div>
+                </section>
+
+                <!-- Progress Tracker Section -->
+                <section id="progress-section" class="card progress-card hidden">
+                    <h3>Processing Video</h3>
+                    <p id="status-message">Initializing process...</p>
+
+                    <!-- Custom Stepper -->
+                    <div class="stepper">
+                        <div class="step" id="step-fetching">
+                            <div class="step-circle">📝</div>
+                            <div class="step-label">Transcript</div>
+                        </div>
+                        <div class="step-line"></div>
+                        <div class="step" id="step-analyzing">
+                            <div class="step-circle">🤖</div>
+                            <div class="step-label">AI Analysis</div>
+                        </div>
+                        <div class="step-line"></div>
+                        <div class="step" id="step-downloading">
+                            <div class="step-circle">⬇️</div>
+                            <div class="step-label">Download</div>
+                        </div>
+                        <div class="step-line"></div>
+                        <div class="step" id="step-clipping">
+                            <div class="step-circle">✂️</div>
+                            <div class="step-label">Clipping</div>
+                        </div>
+                    </div>
+
+                    <!-- Custom Progress Bar -->
+                    <div class="progress-bar-container">
+                        <div id="progress-fill" class="progress-bar-fill"></div>
+                    </div>
+                    <div class="progress-percent" id="progress-percent">0%</div>
+                </section>
+
+                <!-- Results Section -->
+                <section id="results-section" class="results-section hidden">
+                    <div class="results-header">
+                        <h2>🎯 AI Highlights</h2>
+                        <p>We found <span id="clips-count">0</span> key highlights — each under 58 seconds.</p>
+                    </div>
+
+                    <div id="clips-grid" class="clips-grid">
+                        <!-- Clip cards will be dynamically injected here -->
+                    </div>
+                </section>
+            </div>
+
+            <!-- Experiment Dashboard Tab Content -->
+            <div id="experiment-tab" class="tab-content hidden">
+                <section class="card experiment-card">
+                    <div class="experiment-header">
+                        <h2>📊 A/B Experiment Dashboard</h2>
+                        <p class="experiment-subtitle">Automated Scoring Engine Optimization via Welch's t-test</p>
+                    </div>
+                    
+                    <!-- Status Banner -->
+                    <div id="experiment-status-banner" class="status-banner running">
+                        <span id="experiment-status-icon">🟡</span>
+                        <span id="experiment-status-text">Experiment Running - More Data Required</span>
+                    </div>
+                    
+                    <!-- Metrics Grid -->
+                    <div class="experiment-metrics-grid">
+                        <!-- Variant A Panel -->
+                        <div class="variant-panel variant-a">
+                            <h3>Variant A (Baseline)</h3>
+                            <p class="variant-desc">weights: hook=20%, first_3_sec=25%</p>
+                            <div class="metric-row">
+                                <span class="metric-label">Sample Size (N)</span>
+                                <span class="metric-val" id="val-n-a">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Mean Composite Score</span>
+                                <span class="metric-val" id="val-mean-a">0.00</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill fill-a" id="bar-mean-a" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Variant B Panel -->
+                        <div class="variant-panel variant-b">
+                            <h3>Variant B (High Hook)</h3>
+                            <p class="variant-desc">weights: hook=30%, first_3_sec=25%</p>
+                            <div class="metric-row">
+                                <span class="metric-label">Sample Size (N)</span>
+                                <span class="metric-val" id="val-n-b">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Mean Composite Score</span>
+                                <span class="metric-val" id="val-mean-b">0.00</span>
+                            </div>
+                            <div class="bar-container">
+                                <div class="bar-fill fill-b" id="bar-mean-b" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Statistical Summary -->
+                    <div class="stat-engine-panel">
+                        <h3>🔬 Welch's t-test Statistical Engine</h3>
+                        <div class="stat-grid">
+                            <div class="stat-item">
+                                <span class="stat-label">t-statistic</span>
+                                <span class="stat-val" id="stat-t">0.0000</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">p-value</span>
+                                <span class="stat-val" id="stat-p">1.0000</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Confidence Level</span>
+                                <span class="stat-val" id="stat-conf">0.00%</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Stat Winner</span>
+                                <span class="stat-val badge badge-winner" id="stat-winner">None</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Simulator Controls -->
+                    <div class="seeding-control-panel">
+                        <h3>🧪 Experimentation Simulator</h3>
+                        <p>Seed the analytics database with 80+ synthetic creator decisions and platform metrics to test statistical significance in real-time.</p>
+                        <button type="button" id="seed-exp-btn" class="btn btn-secondary btn-small">
+                            Seed A/B Experiment Data 🚀
+                        </button>
+                        <div id="seed-success-msg" class="success-message hidden">
+                            Successfully seeded 80 records! Reloading dashboard...
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- YouTube Dashboard Tab Content -->
+            <div id="youtube-tab" class="tab-content hidden">
+                <!-- YouTube Connection Card -->
+                <section class="card youtube-connection-card">
+                    <div class="youtube-header-row">
+                        <div>
+                            <h2>🔁 YouTube Analytics Learning Loop</h2>
+                            <p class="section-subtitle">Sync performance metrics, optimize scoring configurations, and export training datasets.</p>
+                        </div>
+                        <div id="youtube-connection-status">
+                            <button id="btn-connect-youtube" class="btn btn-primary btn-small">Connect YouTube Channel 🔗</button>
+                        </div>
+                    </div>
+                    
+                    <div class="youtube-actions-row">
+                        <button id="btn-sync-youtube" class="btn btn-secondary btn-small" disabled>
+                            <span class="btn-text">Sync YouTube Analytics 🔄</span>
+                            <div class="spinner hidden"></div>
+                        </button>
+                        <button id="btn-export-dataset" class="btn btn-secondary btn-small">
+                            Export Learning Dataset (CSV) 📥
+                        </button>
+                        <div id="sync-success-msg" class="success-message hidden">
+                            Sync complete!
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Stats Overview Grid -->
+                <div class="experiment-metrics-grid" id="youtube-stats-grid" style="margin-top: 1.5rem; display: none;">
+                    <div class="variant-panel">
+                        <h3>Total Views</h3>
+                        <div class="metric-val" id="yt-total-views">0</div>
+                    </div>
+                    <div class="variant-panel">
+                        <h3>Published Clips</h3>
+                        <div class="metric-val" id="yt-published-count">0</div>
+                    </div>
+                    <div class="variant-panel">
+                        <h3>Avg Retention</h3>
+                        <div class="metric-val" id="yt-avg-retention">0.0%</div>
+                    </div>
+                </div>
+
+                <!-- Main Learning Content -->
+                <div class="youtube-dashboard-layout" id="youtube-dashboard-main" style="display: none; margin-top: 1.5rem;">
+                    <!-- Left: Published Clips list -->
+                    <div class="published-clips-section">
+                        <h3 class="panel-title">Published Clips & Growth Trends</h3>
+                        <div id="published-clips-list" class="published-clips-list">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Learning Reports & Weight recommendations -->
+                    <div class="learning-reports-section">
+                        <!-- Weight Recommendations Panel -->
+                        <div class="card stat-engine-panel">
+                            <h3>⚖️ Weight Recommendations & Correlations</h3>
+                            <div id="weights-report-container">
+                                <!-- Injected dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Creator Disagreement Panel -->
+                        <div class="card stat-engine-panel" style="margin-top: 1.5rem;">
+                            <h3>🚫 Creator Disagreement & Substantive Causes</h3>
+                            <div id="disagreement-report-container">
+                                <!-- Injected dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Transcript Resilience Metrics Panel -->
+                        <div class="card stat-engine-panel" style="margin-top: 1.5rem;">
+                            <h3>🔄 Transcript Resilience Stats</h3>
+                            <div id="transcript-metrics-container">
+                                <!-- Injected dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="youtube-no-data" class="card text-center" style="margin-top: 1.5rem; padding: 3rem;">
+                    <span style="font-size: 3rem;">🔁</span>
+                    <h3>YouTube integration connected, but no clips published yet.</h3>
+                    <p class="text-muted">Extract some clips, mark them selected, and publish them to populate analytics!</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <p>ClipMind &copy; 2026. Created by Anil Babu Samineni. Made with Vanilla CSS, FastAPI, and Gemini / OpenAI.</p>
+        </footer>
+    </div>
+
+    <!-- YouTube Upload Modal -->
+    <div id="youtube-upload-modal" class="modal hidden">
+        <div class="modal-content card">
+            <div class="modal-header">
+                <h3>📤 Publish Clip to YouTube Shorts</h3>
+                <button type="button" id="btn-close-upload-modal" class="btn-icon">✕</button>
+            </div>
+            <form id="youtube-upload-form" style="margin-top: 1rem;">
+                <input type="hidden" id="upload-clip-id">
+                
+                <div class="input-group">
+                    <label for="upload-title">Shorts Title (Max 100 chars)</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="upload-title" maxlength="100" required style="width: 100%;">
+                    </div>
+                </div>
+
+                <div class="input-group" style="margin-top: 1rem;">
+                    <label for="upload-description">Description</label>
+                    <div class="input-wrapper">
+                        <textarea id="upload-description" class="text-area-style" rows="4" style="width: 100%; border: 1px solid var(--border-color); border-radius: 12px; padding: 0.75rem; background: rgba(255,255,255,0.4);"></textarea>
+                    </div>
+                </div>
+
+                <div class="input-group" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+                    <label for="upload-tags">Tags (Comma-separated)</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="upload-tags" placeholder="shorts, tutorial, highlight" style="width: 100%;">
+                    </div>
+                </div>
+
+                <button type="submit" id="btn-submit-upload" class="btn btn-primary" style="width: 100%;">
+                    <span class="btn-text">Publish to YouTube Shorts 🚀</span>
+                    <div class="spinner hidden"></div>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- JS App Entry -->
+    <script src="app.js"></script>
+</body>
+</html>

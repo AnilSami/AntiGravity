@@ -1,0 +1,31 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Environment Keys
+.env
+
+# Application Downloads & Clip Outputs
+backend/output/
+backend/db/
+output/
+downloads/
+temp/
+
+# Video and Audio binaries
+*.mp4
+*.avi
+*.webm
+*.mov
+*.wav
+*.mp3
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+

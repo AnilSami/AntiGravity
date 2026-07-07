@@ -1,0 +1,7 @@
+total_time=91.49
+peak_cpu=59.7
+peak_ram=409.6
+stage_fetching_transcript=0.50
+stage_analyzing=3.04
+stage_downloading=3.55
+stage_clipping=43.90

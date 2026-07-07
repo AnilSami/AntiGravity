@@ -1,0 +1,220 @@
+2026-07-07 11:15:39,307 [INFO] main: CORS allow-list: ['http://localhost:8000', 'http://127.0.0.1:8000']
+INFO:     Started server process [17532]
+INFO:     Waiting for application startup.
+2026-07-07 11:15:39,373 [INFO] main: Starting pipeline module validation...
+2026-07-07 11:15:39,374 [INFO] main: Successfully validated/imported pipeline module: music_selector
+2026-07-07 11:15:39,374 [INFO] main: Successfully validated/imported pipeline module: analyzer
+2026-07-07 11:15:39,374 [INFO] main: Successfully validated/imported pipeline module: clipper
+2026-07-07 11:15:39,374 [INFO] main: Successfully validated/imported pipeline module: job_manager
+2026-07-07 11:15:39,375 [INFO] main: Successfully validated/imported pipeline module: upload_package
+2026-07-07 11:15:39,376 [INFO] main: Successfully validated/imported pipeline module: subtitle_detector
+2026-07-07 11:15:39,380 [INFO] main: Successfully validated/imported pipeline module: analytics_repository
+2026-07-07 11:15:39,380 [INFO] main: All pipeline modules successfully validated.
+2026-07-07 11:15:39,380 [INFO] main: Server started. Output directory ready. Config validated.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-07-07 11:15:40,464 [INFO] main: Queuing new job 72d429d6-cadf-4892-b768-fe055391ac83 for Video ID: aAPpQC-3EyE
+INFO:     127.0.0.1:59277 - "POST /api/analyze HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59278 - "GET /api/progress/72d429d6-cadf-4892-b768-fe055391ac83 HTTP/1.1" 200 OK
+2026-07-07 11:15:42,398 [INFO] analyzer: Loaded transcript cache for video aAPpQC-3EyE from output\cache\transcripts\aAPpQC-3EyE.json
+2026-07-07 11:15:42,406 [INFO] job_manager: Saved transcript metrics for video aAPpQC-3EyE to database.
+2026-07-07 11:15:42,406 [INFO] job_manager: [Checkpoint] Generated deterministic key aAPpQC-3EyE_d36aedcb658a735a for video aAPpQC-3EyE
+2026-07-07 11:15:42,407 [INFO] analyzer: [Checkpoint] Cleared 4 checkpoints for aAPpQC-3EyE
+2026-07-07 11:15:42,414 [INFO] analyzer: Running Agent 1: The Clip Scout in parallel across 2 chunks...
+2026-07-07 11:15:48,923 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:50,221 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:50,225 [INFO] analyzer: Clip Scout found 11 total candidates across all chunks.
+2026-07-07 11:15:50,226 [INFO] analyzer: [Checkpoint] Saved scout checkpoint for key aAPpQC-3EyE_d36aedcb658a735a (11 items)
+2026-07-07 11:15:50,226 [INFO] analyzer: Sampling 10 candidates out of 11 to save API credits.
+2026-07-07 11:15:50,226 [INFO] analyzer: Running dedicated Scoring Agent on 10 candidates...
+2026-07-07 11:15:54,992 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:55,085 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:55,730 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:55,744 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:55,777 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:59,591 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:59,633 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:15:59,808 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:00,201 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:02,022 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:02,026 [INFO] analyzer: [Checkpoint] Saved scored checkpoint for key aAPpQC-3EyE_d36aedcb658a735a (10 items)
+2026-07-07 11:16:02,026 [INFO] analyzer: Running Agent 2: The Content Curator...
+2026-07-07 11:16:05,693 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:05,695 [INFO] analyzer: Content Curator selected 3 unique, non-overlapping clips after safety check.
+2026-07-07 11:16:05,696 [INFO] analyzer: [Checkpoint] Saved curated checkpoint for key aAPpQC-3EyE_d36aedcb658a735a (3 items)
+2026-07-07 11:16:05,696 [INFO] analyzer: Running Agent 3 (Sentence Editor) and Agent 4 (Viral Publisher) in parallel...
+2026-07-07 11:16:06,838 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:06,843 [WARNING] analyzer: Refined indices out of window bounds: [554, 646]. Using original.
+2026-07-07 11:16:06,843 [INFO] analyzer: Boundary Refiner (Hook Optimization): Shifted start forward to 228 (text: 'called Summit Bridge. The AI assistant')
+2026-07-07 11:16:06,909 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:06,914 [INFO] analyzer: Sentence Editor refinement succeeded: 16->14, 37->22
+2026-07-07 11:16:06,914 [INFO] analyzer: Hook Protection: Lock start position at index 14 (text: '300,000 of them use its AI models called')
+2026-07-07 11:16:07,056 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:07,058 [WARNING] analyzer: Refined indices out of window bounds: [292, 332]. Using original.
+2026-07-07 11:16:07,058 [INFO] analyzer: Boundary Refiner: Shifted start backward to 127 to align with sentence start (prev: 'know, using Claude to make scientific')
+2026-07-07 11:16:07,058 [INFO] analyzer: Boundary Refiner: Shifted start backward to 126 to align with sentence start (prev: '>> We have a growing team working on, you')
+2026-07-07 11:16:07,058 [INFO] analyzer: Hook Protection: Lock start position at index 126 (text: '>> We have a growing team working on, you')
+2026-07-07 11:16:08,445 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:08,458 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:08,459 [INFO] analyzer: Viral Publisher SEO metadata generated successfully.
+2026-07-07 11:16:08,466 [INFO] analyzer: Viral Publisher SEO metadata generated successfully.
+2026-07-07 11:16:08,507 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:08,507 [INFO] analyzer: Viral Publisher SEO metadata generated successfully.
+2026-07-07 11:16:08,510 [INFO] analyzer: [Checkpoint] Saved refined checkpoint for key aAPpQC-3EyE_d36aedcb658a735a (3 items)
+2026-07-07 11:16:08,511 [INFO] job_manager: ============================================================
+2026-07-07 11:16:08,511 [INFO] job_manager: CLIP GENERATION REPORT:
+2026-07-07 11:16:08,511 [INFO] job_manager:   Requested:   Dynamic
+2026-07-07 11:16:08,511 [INFO] job_manager:   Scout found: 11 candidates
+2026-07-07 11:16:08,511 [INFO] job_manager:   Curator sel: 0
+2026-07-07 11:16:08,511 [INFO] job_manager:   After dedup: 3
+2026-07-07 11:16:08,511 [INFO] job_manager:   Exported:    3
+2026-07-07 11:16:08,511 [INFO] job_manager:   Average post-curation virality: 6.52/10
+2026-07-07 11:16:08,511 [INFO] job_manager:   Skipped:     0 clips
+2026-07-07 11:16:08,511 [INFO] job_manager: ============================================================
+2026-07-07 11:16:08,512 [INFO] clipper: [PATH DIAGNOSTIC] Requested cache path: output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,521 [INFO] clipper: [CACHE HIT] Video found in local cache.
+2026-07-07 11:16:08,521 [INFO] clipper: [PATH DIAGNOSTIC] Cache hit! Path returned from download_video(): output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,523 [INFO] clipper: Silence Detection: Analyzing audio near end boundary 562.64s (window: ±3.0s)
+2026-07-07 11:16:08,608 [INFO] clipper: Silence Detection: Closest silence at 560.37s is too far from original end 562.64s (diff: -2.27s)
+2026-07-07 11:16:08,608 [INFO] job_manager: Subtitles: Generating ASS file with style: kinetic, font: Anton
+2026-07-07 11:16:08,716 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:16:08,716 [INFO] subtitle_detector: No subtitle zone detected
+2026-07-07 11:16:08,716 [INFO] clipper: [PATH DIAGNOSTIC] Path received by extract_clip(): output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,717 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on received path before resolution: True
+2026-07-07 11:16:08,717 [INFO] clipper: [PATH DIAGNOSTIC] Resolved input path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,717 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on resolved path: True
+2026-07-07 11:16:08,721 [INFO] clipper: ===== FFMPEG EXPORT DIAGNOSTICS =====
+2026-07-07 11:16:08,721 [INFO] clipper: Current Working Directory: D:\Desktop\LLM\backend
+2026-07-07 11:16:08,721 [INFO] clipper: Resolved Input Path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,721 [INFO] clipper: Resolved Output Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_b665d565.mp4
+2026-07-07 11:16:08,721 [INFO] clipper: Resolved Subtitle Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\sub_b665d565.ass
+2026-07-07 11:16:08,764 [INFO] clipper: FFmpeg Version: ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers
+2026-07-07 11:16:08,815 [INFO] clipper: GPU NVENC Availability: True
+2026-07-07 11:16:08,815 [INFO] clipper: =====================================
+2026-07-07 11:16:08,815 [INFO] clipper: Clip extraction attempt 1/2 using encoder: h264_nvenc
+2026-07-07 11:16:08,818 [INFO] clipper: Running ffprobe command: ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:16:08,939 [INFO] clipper: Running FFmpeg command (extract-temp-segment): ffmpeg -y -ss 509.12 -i D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4 -t 53.51999999999998 -r 30 -c:v h264_nvenc -g 1 -bf 0 -c:a aac -b:a 192k -preset p1 -cq 22 D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_b665d565_temp_segment.mp4
+2026-07-07 11:16:11,238 [INFO] clipper: Phase-18 tracking: 1 shot(s) detected.
+2026-07-07 11:16:11,286 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:16:11,304 [INFO] clipper: [P18] Shot 1/1: frames 0–1606 (len=1606)
+2026-07-07 11:16:16,747 [INFO] clipper: [CAMERA QA] Results: {'speaker_visibility_pct': 100.0, 'track_switches': 0, 'avg_movement_per_frame': 0.0, 'max_consecutive_face_lost_frames': 1608, 'freeze_events': 1, 'lost_tracks': 0, 'qa_passed': True, 'qa_bypassed': True}
+2026-07-07 11:16:46,751 [INFO] clipper: Running FFmpeg command (merge-audio-video): ffmpeg -y -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_b665d565_temp_cropped.avi -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_b665d565_temp_segment.mp4 -filter_complex [0:v]subtitles='D\:/Desktop/LLM/backend/output/72d429d6-cadf-4892-b768-fe055391ac83/sub_b665d565.ass'[v];[1:a]highpass=f=100,lowpass=f=8000,afade=t=out:st=53.02:d=0.5[a] -map [v] -map [a] -c:v h264_nvenc -c:a aac -b:a 192k -preset p4 -cq 19 -shortest D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_b665d565.mp4
+2026-07-07 11:16:57,461 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:57,471 [INFO] job_manager: Saved YouTube upload package to output\clips\b665d565_upload_package.txt
+2026-07-07 11:16:57,471 [INFO] job_manager: Saved YouTube upload package JSON to output\clips\b665d565_upload_package.json
+2026-07-07 11:16:59,363 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:16:59,372 [INFO] music_selector: Emotion analysis complete: tense energy=7/10 vol=20%
+2026-07-07 11:16:59,387 [INFO] music_selector: Saved music metadata cache to output\cache\music_metadata_b665d565.json
+2026-07-07 11:16:59,388 [INFO] music_selector: Selected local music track for clip b665d565: assets/music/dramatic/track_2.mp3 (category=dramatic, volume=20%, license='Pixabay Music License', license_id=PB-TRACK_2-999)
+2026-07-07 11:16:59,440 [INFO] music_selector: Mixing music into clip b665d565: vol=20%, fade_in=1.0s, fade_out=2.0s, mode=sidechain-ducking+intro-build
+2026-07-07 11:17:02,651 [INFO] music_selector: Music mixed successfully (sidechain-ducking+intro-build): output\clips\b665d565_with_music.mp4
+2026-07-07 11:17:02,652 [INFO] job_manager: Clip b665d565: serving with-music version 'b665d565_with_music.mp4'
+2026-07-07 11:17:03,605 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:17:03,624 [INFO] music_selector: Clip b665d565: No impact moments identified. Skipping SFX layer.
+2026-07-07 11:17:03,624 [INFO] job_manager: Clip b665d565: Phase 25 complete — layers=['ducking', 'intro_build'], impacts=0
+2026-07-07 11:17:03,626 [INFO] overlays: Reusing cached like prompt ding: output\cache\like_ding.mp3
+2026-07-07 11:17:03,626 [INFO] overlays: Applying like prompt overlay for clip b665d565: duration=53.51999999999998s, has_ding=True
+2026-07-07 11:17:57,700 [INFO] overlays: Like prompt overlay successfully applied to: output\clips\b665d565_with_music.mp4
+2026-07-07 11:17:57,700 [INFO] job_manager: Clip b665d565: Like prompt overlay successfully applied.
+2026-07-07 11:17:57,702 [INFO] job_manager: Saved clip b665d565 metadata cache to disk.
+2026-07-07 11:17:57,712 [INFO] job_manager: Saved clip b665d565 metadata and subtitle analytics to database.
+2026-07-07 11:17:57,712 [INFO] clipper: Silence Detection: Analyzing audio near end boundary 330.56s (window: ±3.0s)
+2026-07-07 11:17:57,811 [INFO] clipper: Silence Detection: Snapping end boundary 330.56s \u2192 328.86s (diff: -1.70s, new duration: 40.7s)
+2026-07-07 11:17:57,812 [INFO] job_manager: Audio boundary refinement: 330.56 \u2192 328.86
+2026-07-07 11:17:57,812 [INFO] job_manager: Subtitles: Generating ASS file with style: kinetic, font: Anton
+2026-07-07 11:17:57,948 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:17:57,948 [INFO] subtitle_detector: No subtitle zone detected
+2026-07-07 11:17:57,949 [INFO] clipper: [PATH DIAGNOSTIC] Path received by extract_clip(): output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:17:57,949 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on received path before resolution: True
+2026-07-07 11:17:57,951 [INFO] clipper: [PATH DIAGNOSTIC] Resolved input path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:17:57,951 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on resolved path: True
+2026-07-07 11:17:57,961 [INFO] clipper: ===== FFMPEG EXPORT DIAGNOSTICS =====
+2026-07-07 11:17:57,961 [INFO] clipper: Current Working Directory: D:\Desktop\LLM\backend
+2026-07-07 11:17:57,961 [INFO] clipper: Resolved Input Path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:17:57,961 [INFO] clipper: Resolved Output Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_288285ad.mp4
+2026-07-07 11:17:57,961 [INFO] clipper: Resolved Subtitle Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\sub_288285ad.ass
+2026-07-07 11:17:58,015 [INFO] clipper: FFmpeg Version: ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers
+2026-07-07 11:17:58,016 [INFO] clipper: GPU NVENC Availability: True
+2026-07-07 11:17:58,016 [INFO] clipper: =====================================
+2026-07-07 11:17:58,016 [INFO] clipper: Clip extraction attempt 1/2 using encoder: h264_nvenc
+2026-07-07 11:17:58,028 [INFO] clipper: Running ffprobe command: ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:17:58,175 [INFO] clipper: Running FFmpeg command (extract-temp-segment): ffmpeg -y -ss 288.16 -i D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4 -t 40.69999999999999 -r 30 -c:v h264_nvenc -g 1 -bf 0 -c:a aac -b:a 192k -preset p1 -cq 22 D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_288285ad_temp_segment.mp4
+2026-07-07 11:17:59,934 [INFO] clipper: Phase-18 tracking: 1 shot(s) detected.
+2026-07-07 11:17:59,980 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:18:00,008 [INFO] clipper: [P18] Shot 1/1: frames 0–1221 (len=1221)
+2026-07-07 11:18:03,956 [INFO] clipper: [CAMERA QA] Results: {'speaker_visibility_pct': 100.0, 'track_switches': 0, 'avg_movement_per_frame': 0.03, 'max_consecutive_face_lost_frames': 690, 'freeze_events': 3, 'lost_tracks': 1, 'qa_passed': True, 'qa_bypassed': True}
+2026-07-07 11:18:23,363 [INFO] clipper: Running FFmpeg command (merge-audio-video): ffmpeg -y -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_288285ad_temp_cropped.avi -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_288285ad_temp_segment.mp4 -filter_complex [0:v]subtitles='D\:/Desktop/LLM/backend/output/72d429d6-cadf-4892-b768-fe055391ac83/sub_288285ad.ass'[v];[1:a]highpass=f=100,lowpass=f=8000,afade=t=out:st=40.20:d=0.5[a] -map [v] -map [a] -c:v h264_nvenc -c:a aac -b:a 192k -preset p4 -cq 19 -shortest D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_288285ad.mp4
+2026-07-07 11:18:33,818 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:18:33,832 [INFO] job_manager: Saved YouTube upload package to output\clips\288285ad_upload_package.txt
+2026-07-07 11:18:33,832 [INFO] job_manager: Saved YouTube upload package JSON to output\clips\288285ad_upload_package.json
+2026-07-07 11:18:35,536 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:18:35,545 [INFO] music_selector: Emotion analysis complete: inspirational energy=7/10 vol=20%
+2026-07-07 11:18:35,553 [INFO] music_selector: Saved music metadata cache to output\cache\music_metadata_288285ad.json
+2026-07-07 11:18:35,553 [INFO] music_selector: Selected local music track for clip 288285ad: assets/music/inspirational/track_2.mp3 (category=inspirational, volume=20%, license='Pixabay Music License', license_id=PB-TRACK_2-999)
+2026-07-07 11:18:35,559 [INFO] music_selector: Mixing music into clip 288285ad: vol=20%, fade_in=1.5s, fade_out=2.0s, mode=sidechain-ducking+intro-build
+2026-07-07 11:18:37,097 [INFO] music_selector: Music mixed successfully (sidechain-ducking+intro-build): output\clips\288285ad_with_music.mp4
+2026-07-07 11:18:37,097 [INFO] job_manager: Clip 288285ad: serving with-music version '288285ad_with_music.mp4'
+2026-07-07 11:18:38,676 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:18:38,692 [INFO] music_selector: Clip 288285ad: Identified 3 impact moments: [{'timestamp_hint': 'middle', 'word': 'double the human lifespan', 'effect_type': 'impact'}, {'timestamp_hint': 'late', 'word': 'compressed 21st century', 'effect_type': 'whoosh'}, {'timestamp_hint': 'late', 'word': '10 times the rate of progress', 'effect_type': 'impact'}]
+2026-07-07 11:18:38,694 [INFO] music_selector: ElevenLabs: downloaded 353219 bytes for description='deep cinematic impact boom'
+2026-07-07 11:18:38,694 [INFO] music_selector: Clip 288285ad: SFX 0 (impact) fetched: output\cache\sfx_288285ad_0.mp3
+2026-07-07 11:18:38,695 [INFO] music_selector: ElevenLabs: downloaded 353219 bytes for description='fast whoosh transition'
+2026-07-07 11:18:38,695 [INFO] music_selector: Clip 288285ad: SFX 1 (whoosh) fetched: output\cache\sfx_288285ad_1.mp3
+2026-07-07 11:18:38,696 [INFO] music_selector: ElevenLabs: downloaded 353219 bytes for description='deep cinematic impact boom'
+2026-07-07 11:18:38,696 [INFO] music_selector: Clip 288285ad: SFX 2 (impact) fetched: output\cache\sfx_288285ad_2.mp3
+2026-07-07 11:18:38,696 [INFO] music_selector: Clip 288285ad: Applying 3 impact SFX. FFmpeg filter: [0:a]aformat=sample_rates=44100:channel_layouts=stereo[norm_voice];[1:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:1.5,asetpts=PTS-STARTPTS,volume=0.30,adelay=20349|20349[sfxd0];[2:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:1.5,asetpts=PTS-STARTPTS,volume=0.30,adelay=...
+2026-07-07 11:18:40,194 [INFO] music_selector: Clip 288285ad: Impact SFX mixed successfully. Output: output\clips\288285ad_with_music.mp4 (53,405,406 bytes)
+2026-07-07 11:18:40,194 [INFO] job_manager: Clip 288285ad: Phase 25 complete — layers=['ducking', 'intro_build', 'impact_sfx'], impacts=3
+2026-07-07 11:18:40,195 [INFO] overlays: Reusing cached like prompt ding: output\cache\like_ding.mp3
+2026-07-07 11:18:40,195 [INFO] overlays: Applying like prompt overlay for clip 288285ad: duration=40.69999999999999s, has_ding=True
+2026-07-07 11:19:41,133 [INFO] overlays: Like prompt overlay successfully applied to: output\clips\288285ad_with_music.mp4
+2026-07-07 11:19:41,133 [INFO] job_manager: Clip 288285ad: Like prompt overlay successfully applied.
+2026-07-07 11:19:41,134 [INFO] job_manager: Saved clip 288285ad metadata cache to disk.
+2026-07-07 11:19:41,144 [INFO] job_manager: Saved clip 288285ad metadata and subtitle analytics to database.
+2026-07-07 11:19:41,144 [INFO] clipper: Silence Detection: Analyzing audio near end boundary 71.76s (window: ±3.0s)
+2026-07-07 11:19:41,313 [INFO] clipper: Silence Detection: Snapping end boundary 71.76s \u2192 70.02s (diff: -1.74s, new duration: 34.7s)
+2026-07-07 11:19:41,313 [INFO] job_manager: Audio boundary refinement: 71.76 \u2192 70.02
+2026-07-07 11:19:41,313 [INFO] job_manager: Subtitles: Generating ASS file with style: kinetic, font: Anton
+2026-07-07 11:19:41,522 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:19:41,523 [INFO] subtitle_detector: No subtitle zone detected
+2026-07-07 11:19:41,523 [INFO] clipper: [PATH DIAGNOSTIC] Path received by extract_clip(): output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:19:41,523 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on received path before resolution: True
+2026-07-07 11:19:41,524 [INFO] clipper: [PATH DIAGNOSTIC] Resolved input path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:19:41,524 [INFO] clipper: [PATH DIAGNOSTIC] os.path.exists() result on resolved path: True
+2026-07-07 11:19:41,529 [INFO] clipper: ===== FFMPEG EXPORT DIAGNOSTICS =====
+2026-07-07 11:19:41,529 [INFO] clipper: Current Working Directory: D:\Desktop\LLM\backend
+2026-07-07 11:19:41,529 [INFO] clipper: Resolved Input Path: D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:19:41,529 [INFO] clipper: Resolved Output Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_cff65068.mp4
+2026-07-07 11:19:41,529 [INFO] clipper: Resolved Subtitle Path: D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\sub_cff65068.ass
+2026-07-07 11:19:41,579 [INFO] clipper: FFmpeg Version: ffmpeg version 7.1-essentials_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers
+2026-07-07 11:19:41,579 [INFO] clipper: GPU NVENC Availability: True
+2026-07-07 11:19:41,579 [INFO] clipper: =====================================
+2026-07-07 11:19:41,579 [INFO] clipper: Clip extraction attempt 1/2 using encoder: h264_nvenc
+2026-07-07 11:19:41,613 [INFO] clipper: Running ffprobe command: ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4
+2026-07-07 11:19:41,772 [INFO] clipper: Running FFmpeg command (extract-temp-segment): ffmpeg -y -ss 35.28 -i D:\Desktop\LLM\backend\output\cache\aAPpQC-3EyE.mp4 -t 34.739999999999995 -r 30 -c:v h264_nvenc -g 1 -bf 0 -c:a aac -b:a 192k -preset p1 -cq 22 D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_cff65068_temp_segment.mp4
+2026-07-07 11:19:43,714 [INFO] clipper: Phase-18 tracking: 1 shot(s) detected.
+2026-07-07 11:19:43,855 [INFO] subtitle_detector: No consistent subtitle zone detected
+2026-07-07 11:19:43,874 [INFO] clipper: [P18] Shot 1/1: frames 0–1043 (len=1043)
+2026-07-07 11:19:47,874 [INFO] clipper: [CAMERA QA] Results: {'speaker_visibility_pct': 100.0, 'track_switches': 0, 'avg_movement_per_frame': 0.04, 'max_consecutive_face_lost_frames': 780, 'freeze_events': 2, 'lost_tracks': 1, 'qa_passed': True, 'qa_bypassed': True}
+2026-07-07 11:20:04,108 [INFO] clipper: Running FFmpeg command (merge-audio-video): ffmpeg -y -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_cff65068_temp_cropped.avi -i D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_cff65068_temp_segment.mp4 -filter_complex [0:v]subtitles='D\:/Desktop/LLM/backend/output/72d429d6-cadf-4892-b768-fe055391ac83/sub_cff65068.ass'[v];[1:a]highpass=f=100,lowpass=f=8000,afade=t=out:st=34.24:d=0.5[a] -map [v] -map [a] -c:v h264_nvenc -c:a aac -b:a 192k -preset p4 -cq 19 -shortest D:\Desktop\LLM\backend\output\72d429d6-cadf-4892-b768-fe055391ac83\clip_cff65068.mp4
+2026-07-07 11:20:13,359 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:20:13,372 [INFO] job_manager: Saved YouTube upload package to output\clips\cff65068_upload_package.txt
+2026-07-07 11:20:13,372 [INFO] job_manager: Saved YouTube upload package JSON to output\clips\cff65068_upload_package.json
+2026-07-07 11:20:14,684 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:20:14,693 [INFO] music_selector: Emotion analysis complete: tense energy=7/10 vol=20%
+2026-07-07 11:20:14,705 [INFO] music_selector: Saved music metadata cache to output\cache\music_metadata_cff65068.json
+2026-07-07 11:20:14,705 [INFO] music_selector: Selected local music track for clip cff65068: assets/music/dramatic/track_1.mp3 (category=dramatic, volume=20%, license='Pixabay Music License', license_id=PB-TRACK_1-999)
+2026-07-07 11:20:14,712 [INFO] music_selector: Mixing music into clip cff65068: vol=20%, fade_in=1.0s, fade_out=2.0s, mode=sidechain-ducking+intro-build
+2026-07-07 11:20:16,051 [INFO] music_selector: Music mixed successfully (sidechain-ducking+intro-build): output\clips\cff65068_with_music.mp4
+2026-07-07 11:20:16,051 [INFO] job_manager: Clip cff65068: serving with-music version 'cff65068_with_music.mp4'
+2026-07-07 11:20:16,718 [INFO] httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-07 11:20:16,732 [INFO] music_selector: Clip cff65068: No impact moments identified. Skipping SFX layer.
+2026-07-07 11:20:16,732 [INFO] job_manager: Clip cff65068: Phase 25 complete — layers=['ducking', 'intro_build'], impacts=0
+2026-07-07 11:20:16,733 [INFO] overlays: Reusing cached like prompt ding: output\cache\like_ding.mp3
+2026-07-07 11:20:16,733 [INFO] overlays: Applying like prompt overlay for clip cff65068: duration=34.739999999999995s, has_ding=True
+2026-07-07 11:20:32,560 [INFO] overlays: Like prompt overlay successfully applied to: output\clips\cff65068_with_music.mp4
+2026-07-07 11:20:32,560 [INFO] job_manager: Clip cff65068: Like prompt overlay successfully applied.
+2026-07-07 11:20:32,561 [INFO] job_manager: Saved clip cff65068 metadata cache to disk.
+2026-07-07 11:20:32,573 [INFO] job_manager: Saved clip cff65068 metadata and subtitle analytics to database.
+2026-07-07 11:20:32,577 [INFO] job_manager: Preserving cached source video: output\cache\aAPpQC-3EyE.mp4
+INFO:     127.0.0.1:60377 - "GET /api/clips/72d429d6-cadf-4892-b768-fe055391ac83 HTTP/1.1" 200 OK
