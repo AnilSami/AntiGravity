@@ -486,10 +486,13 @@ async def youtube_status():
         creds = get_valid_credentials()
         connected = creds is not None
         channel_name = None
+        channel_id = None
         if connected:
             creds_info = analytics_db.get_credentials("youtube")
-            channel_name = creds_info["channel_name"] if creds_info else None
-        return {"connected": connected, "channel_name": channel_name}
+            if creds_info:
+                channel_name = creds_info.get("channel_name")
+                channel_id = creds_info.get("channel_id")
+        return {"connected": connected, "channel_name": channel_name, "channel_id": channel_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -595,6 +598,26 @@ async def publish_clip(clip_id: str, request_data: PublishRequest):
         return {"status": "success", "youtube_video_id": yt_id, "message": "Clip successfully published to YouTube."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/youtube/upload/{clip_id}")
+async def upload_clip(clip_id: str):
+    import re
+    if not re.match(r"^[a-zA-Z0-9\-]+$", clip_id):
+        raise HTTPException(status_code=400, detail="Invalid clip ID format")
+    try:
+        from youtube_service import upload_clip_to_youtube
+        res = upload_clip_to_youtube(clip_id)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/youtube/upload/progress/{clip_id}")
+async def upload_progress(clip_id: str):
+    try:
+        from youtube_service import _upload_progress
+        return {"progress": _upload_progress.get(clip_id, 0)}
+    except Exception:
+        return {"progress": 0}
 
 @app.get("/api/youtube/dashboard")
 async def get_youtube_dashboard():

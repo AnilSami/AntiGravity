@@ -2,6 +2,68 @@ const BACKEND_URL = window.location.origin.startsWith('file:')
     ? 'http://127.0.0.1:8000' 
     : window.location.origin;
 
+// Global YouTube OAuth Connection State
+window.youtubeConnected = false;
+window.youtubeChannelName = '';
+
+async function checkYoutubeStatus() {
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/youtube/status`);
+        const data = await response.json();
+        const connectedChanged = (window.youtubeConnected !== data.connected);
+        window.youtubeConnected = data.connected;
+        window.youtubeChannelName = data.channel_name;
+        
+        // Update connection status bar
+        const globalStatusBar = document.getElementById('youtube-global-status-bar');
+        if (globalStatusBar) {
+            globalStatusBar.style.display = 'block';
+            if (window.youtubeConnected) {
+                globalStatusBar.style.background = 'rgba(46, 213, 115, 0.15)';
+                globalStatusBar.style.border = '1px solid rgba(46, 213, 115, 0.3)';
+                globalStatusBar.style.color = '#2ed573';
+                globalStatusBar.innerHTML = `YouTube: ✅ Connected as <strong>${escapeHtml(window.youtubeChannelName)}</strong>`;
+            } else {
+                globalStatusBar.style.background = 'rgba(255, 71, 87, 0.15)';
+                globalStatusBar.style.border = '1px solid rgba(255, 71, 87, 0.3)';
+                globalStatusBar.style.color = '#ff4757';
+                globalStatusBar.innerHTML = `YouTube: ❌ Not connected — <a href="${BACKEND_URL}/api/youtube/auth" target="_blank" style="color: #ff4757; text-decoration: underline; font-weight: bold;">Connect now</a>`;
+            }
+        }
+        
+        // If connection status toggled, update all clip cards in the DOM!
+        if (connectedChanged) {
+            updateAllClipCardButtons();
+        }
+    } catch (err) {
+        console.error('Error checking YouTube status:', err);
+    }
+}
+
+function updateAllClipCardButtons() {
+    const containers = document.querySelectorAll('.youtube-upload-container');
+    containers.forEach(container => {
+        const clipId = container.id.replace('yt-container-', '');
+        // Do not overwrite if already uploaded
+        if (container.querySelector('a[href*="youtu.be"]')) return;
+        
+        if (window.youtubeConnected) {
+            container.innerHTML = `
+                <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                    Upload to YouTube ▶
+                </button>
+            `;
+        } else {
+            container.innerHTML = `
+                <button class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
+                    Connect YouTube
+                </button>
+            `;
+        }
+    });
+}
+
+
 // DOM Elements
 const form = document.getElementById('extractor-form');
 const youtubeUrlInput = document.getElementById('youtube-url');
@@ -808,13 +870,24 @@ SEARCH INTENT: ${intent}`;
                 ${musicCardHtml}
 
                 <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-
                     <a href="${videoUrl}" download="${clip.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.mp4" class="btn btn-secondary btn-small btn-download" style="flex: 1; text-align: center; justify-content: center;">
                         📥 Download
                     </a>
-                    <button class="btn btn-primary btn-small btn-publish-trigger" data-clip-id="${clip.id}" data-title="${escapeHtml(shortsTitle)}" data-desc="${escapeHtml(shortsDescription)}" data-tags="${escapeHtml(shortsTags.join(','))}" style="flex: 1; justify-content: center;">
-                        🔁 Publish
-                    </button>
+                    <div class="youtube-upload-container" id="yt-container-${clip.id}" style="flex: 1; display: flex;">
+                        ${clip.youtube_video_id ? `
+                            <a href="${escapeHtml(clip.youtube_url)}" target="_blank" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
+                                View on YouTube 🚀
+                            </a>
+                        ` : (window.youtubeConnected ? `
+                            <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clip.id}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                                Upload to YouTube ▶
+                            </button>
+                        ` : `
+                            <button class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
+                                Connect YouTube
+                            </button>
+                        `)}
+                    </div>
                 </div>
             </div>
         `;
@@ -929,6 +1002,69 @@ clipsGrid.addEventListener('click', async (e) => {
             allToggles.forEach(btn => {
                 btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
             });
+        }
+        return;
+    }
+
+    // 5. YouTube Connect Popup Handler
+    const connectPopupBtn = e.target.closest('.btn-connect-popup');
+    if (connectPopupBtn) {
+        window.open(`${BACKEND_URL}/api/youtube/auth`, 'Connect YouTube', 'width=600,height=600');
+        return;
+    }
+
+    // 6. YouTube Upload Handler
+    const uploadYoutubeBtn = e.target.closest('.btn-upload-youtube');
+    if (uploadYoutubeBtn) {
+        const clipId = uploadYoutubeBtn.getAttribute('data-clip-id');
+        const container = document.getElementById(`yt-container-${clipId}`);
+        if (!container) return;
+
+        // Disable button and start progress
+        uploadYoutubeBtn.disabled = true;
+        uploadYoutubeBtn.textContent = 'Uploading... 0%';
+
+        let pollInterval = null;
+        
+        // Start polling the progress endpoint
+        pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/youtube/upload/progress/${clipId}`);
+                const data = await res.json();
+                if (uploadYoutubeBtn && uploadYoutubeBtn.disabled) {
+                    uploadYoutubeBtn.textContent = `Uploading... ${data.progress}%`;
+                }
+            } catch (err) {
+                console.error('Error polling upload progress:', err);
+            }
+        }, 300);
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/youtube/upload/${clipId}`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            clearInterval(pollInterval);
+            
+            if (!response.ok) throw new Error(data.detail || 'Upload failed.');
+
+            // Success
+            container.innerHTML = `
+                <a href="${escapeHtml(data.youtube_url)}" target="_blank" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
+                    View on YouTube 🚀
+                </a>
+            `;
+        } catch (err) {
+            clearInterval(pollInterval);
+            console.error('Upload error:', err);
+            container.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 0.25rem; width: 100%;">
+                    <span style="color: #ff4757; font-size: 0.75rem; text-align: center;">Error: ${escapeHtml(err.message)}</span>
+                    <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="width: 100%; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                        Retry Upload ▶
+                    </button>
+                </div>
+            `;
         }
         return;
     }
@@ -1555,6 +1691,10 @@ if (uploadForm) {
 
 // Check URL Params on load to route active tab
 window.addEventListener('DOMContentLoaded', () => {
+    // Check global YouTube connection status
+    checkYoutubeStatus();
+    setInterval(checkYoutubeStatus, 2000);
+
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get('tab');
     const errorParam = urlParams.get('error');

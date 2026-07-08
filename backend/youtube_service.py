@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import logging
 import random
@@ -24,6 +25,7 @@ import threading
 
 _oauth_state_store: Dict[str, float] = {}
 _oauth_state_lock = threading.Lock()
+_upload_progress: Dict[str, int] = {}
 _OAUTH_STATE_TTL_SECONDS = 600  # 10 minutes
 
 def store_oauth_state(state: str) -> None:
@@ -108,6 +110,36 @@ def decrypt_token(encrypted_token: str) -> str:
     return f.decrypt(encrypted_token.encode()).decode()
 
 
+# --- JSON Token Storage Helpers ---
+_TOKENS_FILE_PATH = os.path.join("output", "youtube_tokens.json")
+
+def _save_tokens_to_json(access_token: str, refresh_token: str, token_expiry: float, channel_name: str, channel_id: str):
+    try:
+        os.makedirs("output", exist_ok=True)
+        data = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_expiry": token_expiry,
+            "channel_name": channel_name,
+            "channel_id": channel_id
+        }
+        with open(_TOKENS_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Successfully saved YouTube tokens to {_TOKENS_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving tokens to JSON: {e}")
+
+def _load_tokens_from_json() -> Optional[dict]:
+    if not os.path.exists(_TOKENS_FILE_PATH):
+        return None
+    try:
+        with open(_TOKENS_FILE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading tokens from JSON: {e}")
+        return None
+
+
 # --- Configuration & Mock Check ---
 def is_mock_mode() -> bool:
     from config import settings
@@ -177,29 +209,41 @@ def handle_oauth_callback(code: str, redirect_uri: str) -> dict:
     if is_mock_mode() or code.startswith("mock_"):
         # Save mock credentials
         channel_name = "Mock Shorts Creator"
+        channel_id = "mock_channel_id_123"
         analytics_db.save_credentials(
             platform="youtube",
             access_token=encrypt_token("mock_access_token_123"),
             refresh_token=encrypt_token("mock_refresh_token_123"),
             token_expiry=time.time() + 3600.0,
-            channel_name=channel_name
+            channel_name=channel_name,
+            channel_id=channel_id
         )
-        return {"channel_name": channel_name, "mock": True}
+        _save_tokens_to_json(
+            access_token="mock_access_token_123",
+            refresh_token="mock_refresh_token_123",
+            token_expiry=time.time() + 3600.0,
+            channel_name=channel_name,
+            channel_id=channel_id
+        )
+        return {"channel_name": channel_name, "channel_id": channel_id, "mock": True}
         
     flow = get_oauth_flow(redirect_uri)
     flow.fetch_token(code=code)
     credentials = flow.credentials
     
-    # Retrieve channel name using YouTube Data API
+    # Retrieve channel name and ID using YouTube Data API
     youtube = build("youtube", "v3", credentials=credentials)
     channels_response = youtube.channels().list(
-        part="snippet",
+        part="snippet,id",
         mine=True
     ).execute()
     
     channel_name = "YouTube Creator"
+    channel_id = "unknown_channel_id"
     if "items" in channels_response and len(channels_response["items"]) > 0:
-        channel_name = channels_response["items"][0]["snippet"]["title"]
+        item = channels_response["items"][0]
+        channel_name = item["snippet"]["title"]
+        channel_id = item["id"]
         
     # Save credentials securely
     analytics_db.save_credentials(
@@ -207,10 +251,18 @@ def handle_oauth_callback(code: str, redirect_uri: str) -> dict:
         access_token=encrypt_token(credentials.token),
         refresh_token=encrypt_token(credentials.refresh_token or ""),
         token_expiry=credentials.expiry.timestamp() if credentials.expiry else time.time() + 3600.0,
-        channel_name=channel_name
+        channel_name=channel_name,
+        channel_id=channel_id
+    )
+    _save_tokens_to_json(
+        access_token=credentials.token,
+        refresh_token=credentials.refresh_token or "",
+        token_expiry=credentials.expiry.timestamp() if credentials.expiry else time.time() + 3600.0,
+        channel_name=channel_name,
+        channel_id=channel_id
     )
     
-    return {"channel_name": channel_name, "mock": False}
+    return {"channel_name": channel_name, "channel_id": channel_id, "mock": False}
 
 
 # --- Token Refresh Logic ---
@@ -218,25 +270,37 @@ def get_valid_credentials() -> Optional[Credentials]:
     """
     Retrieves stored credentials, decrypts them, refreshes access token if expired, and returns Credentials.
     """
-    creds_row = analytics_db.get_credentials("youtube")
-    if not creds_row:
-        return None
+    # Try to load from output/youtube_tokens.json first
+    tokens_data = _load_tokens_from_json()
+    if tokens_data:
+        access_token = tokens_data["access_token"]
+        refresh_token = tokens_data["refresh_token"]
+        token_expiry = tokens_data["token_expiry"]
+        channel_name = tokens_data.get("channel_name")
+        channel_id = tokens_data.get("channel_id")
+    else:
+        # Fallback to database
+        creds_row = analytics_db.get_credentials("youtube")
+        if not creds_row:
+            return None
+        access_token = decrypt_token(creds_row["access_token"])
+        refresh_token = decrypt_token(creds_row["refresh_token"])
+        token_expiry = creds_row["token_expiry"]
+        channel_name = creds_row.get("channel_name")
+        channel_id = creds_row.get("channel_id")
         
     # If in mock mode, return none/mock indicator or construct mock Credentials
-    if is_mock_mode() or creds_row["refresh_token"].startswith("mock_") or decrypt_token(creds_row["refresh_token"]).startswith("mock_"):
+    if is_mock_mode() or refresh_token.startswith("mock_"):
         # Just return custom indicator credentials
         return Credentials(token="mock_valid")
 
-    access_token = decrypt_token(creds_row["access_token"])
-    refresh_token = decrypt_token(creds_row["refresh_token"])
-    token_expiry = creds_row["token_expiry"]
-    
+    from config import settings
     creds = Credentials(
         token=access_token,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("YOUTUBE_CLIENT_ID"),
-        client_secret=os.getenv("YOUTUBE_CLIENT_SECRET")
+        client_id=settings.YOUTUBE_CLIENT_ID,
+        client_secret=settings.YOUTUBE_CLIENT_SECRET
     )
     
     # If expired (or expiring in 60s), refresh
@@ -251,7 +315,15 @@ def get_valid_credentials() -> Optional[Credentials]:
                 access_token=encrypt_token(creds.token),
                 refresh_token=encrypt_token(creds.refresh_token or refresh_token),
                 token_expiry=creds.expiry.timestamp() if creds.expiry else time.time() + 3600.0,
-                channel_name=creds_row["channel_name"]
+                channel_name=channel_name,
+                channel_id=channel_id
+            )
+            _save_tokens_to_json(
+                access_token=creds.token,
+                refresh_token=creds.refresh_token or refresh_token,
+                token_expiry=creds.expiry.timestamp() if creds.expiry else time.time() + 3600.0,
+                channel_name=channel_name,
+                channel_id=channel_id
             )
             logger.info("YouTube access token refreshed successfully.")
         except Exception as e:
@@ -347,7 +419,142 @@ def publish_clip_to_youtube(clip_id: str, video_path: str, title: str, descripti
         upload_date=date.today().isoformat()
     )
     
+    # Also update the clip_analytics table with youtube_video_id and youtube_url
+    youtube_url = f"https://youtu.be/{youtube_video_id}"
+    analytics_db.update_clip_youtube_info(clip_id, youtube_video_id, youtube_url)
+    
     return youtube_video_id
+
+
+def upload_clip_to_youtube(clip_id: str) -> dict:
+    """
+    Loads clip metadata, extracts the #1 recommended title, description, and hashtags,
+    performs a resumable upload to YouTube using Category 22 (People & Blogs),
+    returns {youtube_url, video_id, upload_status},
+    and updates the database.
+    """
+    clip = analytics_db.get_clip_by_id(clip_id)
+    if not clip:
+        raise ValueError(f"Clip not found in database: {clip_id}")
+
+    # Load title, description, hashtags from upload_package if available
+    pkg = clip.get("upload_package")
+    
+    title = ""
+    description = ""
+    tags = []
+    
+    if pkg:
+        if pkg.get("titles"):
+            title = pkg["titles"][0]
+        if pkg.get("description"):
+            description = pkg["description"]
+        if pkg.get("hashtags"):
+            tags = pkg["hashtags"]
+            # Append hashtags to description
+            description = description + "\n\n" + " ".join(tags)
+            
+    if not title:
+        title = clip.get("shorts_title") or f"Highlight Clip {clip_id}"
+    if not description:
+        description = clip.get("shorts_description") or "Check out this highlight clip!"
+    if not tags:
+        tags = clip.get("shorts_tags") or []
+
+    # Find the _with_music.mp4 video file
+    clips_dir = os.path.join("output", "clips")
+    video_path = os.path.join(clips_dir, f"{clip_id}_with_music.mp4")
+    if not os.path.exists(video_path):
+        # Fallback to output/cache/ or other jobs directory
+        output_dir = "output"
+        found = False
+        if os.path.exists(output_dir):
+            for job_folder in os.listdir(output_dir):
+                job_path = os.path.join(output_dir, job_folder)
+                if os.path.isdir(job_path):
+                    potential = os.path.join(job_path, f"clip_{clip_id}.mp4")
+                    if os.path.exists(potential):
+                        video_path = potential
+                        found = True
+                        break
+        if not found:
+            raise FileNotFoundError(f"Video clip file not found for ID: {clip_id}")
+
+    creds = get_valid_credentials()
+    if not creds:
+        raise ValueError("YouTube account is not connected. Connect via OAuth first.")
+
+    # Category: 22 (People & Blogs)
+    # Privacy: public
+    # Made for kids: false
+    body = {
+        "snippet": {
+            "title": title[:100],
+            "description": description[:5000],
+            "tags": tags,
+            "categoryId": "22"
+        },
+        "status": {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": False
+        }
+    }
+
+    if is_mock_mode() or creds.token == "mock_valid":
+        # Simulate video upload progress increment
+        _upload_progress[clip_id] = 0
+        for p in range(20, 101, 20):
+            time.sleep(0.1)
+            _upload_progress[clip_id] = p
+        
+        video_id = "mock_yt_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=11))
+        youtube_url = f"https://youtu.be/{video_id}"
+        
+        # Save to database
+        analytics_db.update_clip_youtube_info(clip_id, video_id, youtube_url)
+        analytics_db.update_creator_action(clip_id=clip_id, published=True)
+        return {
+            "video_id": video_id,
+            "youtube_url": youtube_url,
+            "upload_status": "success"
+        }
+
+    youtube = build("youtube", "v3", credentials=creds)
+    media = MediaFileUpload(
+        video_path,
+        mimetype="video/mp4",
+        chunksize=1024 * 1024,
+        resumable=True
+    )
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=media
+    )
+    
+    logger.info(f"Resumable uploading clip {clip_id} to YouTube...")
+    _upload_progress[clip_id] = 0
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            prog_pct = int(status.progress() * 100)
+            _upload_progress[clip_id] = prog_pct
+            logger.info(f"YouTube Resumable Upload Progress: {prog_pct}%")
+            
+    video_id = response.get("id")
+    youtube_url = f"https://youtu.be/{video_id}"
+    logger.info(f"Uploaded clip {clip_id} successfully. YouTube Video ID: {video_id}")
+    
+    # Save to database
+    analytics_db.update_clip_youtube_info(clip_id, video_id, youtube_url)
+    analytics_db.update_creator_action(clip_id=clip_id, published=True)
+    
+    return {
+        "video_id": video_id,
+        "youtube_url": youtube_url,
+        "upload_status": "success"
+    }
 
 
 # --- Analytics Sync Flow ---

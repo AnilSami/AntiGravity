@@ -15,6 +15,10 @@ class AnalyticsRepository(ABC):
         pass
 
     @abstractmethod
+    def get_clip_by_id(self, clip_id: str) -> Optional[dict]:
+        pass
+
+    @abstractmethod
     def save_clip_metadata(self, video_id: str, clip_id: str, virality_score: float, detailed_scores: dict, experiment_id: str = None, variant_id: str = None, scoring_version: str = None, prompt_version: str = None, weight_version: str = None, title: str = None, reason: str = None, shorts_title: str = None, shorts_description: str = None, shorts_tags: list = None, duration: float = None, subtitle_style: str = None, creator_preset: str = None, words_per_chunk: float = None, reading_speed: float = None, highlight_count: int = None, render_time_ms: int = None, ass_event_count: int = None, fallback_used: bool = None, subtitle_version: str = None, face_position: str = None, start_time: float = None, end_time: float = None, start_index: int = None, end_index: int = None, upload_package: dict = None, emotion: str = None, energy_level: int = None, music_description: str = None, volume_pct: int = None, music_source: str = None, has_music: bool = None):
         pass
 
@@ -39,7 +43,7 @@ class AnalyticsRepository(ABC):
         pass
 
     @abstractmethod
-    def save_credentials(self, platform: str, access_token: str, refresh_token: str, token_expiry: float, channel_name: str = None):
+    def save_credentials(self, platform: str, access_token: str, refresh_token: str, token_expiry: float, channel_name: str = None, channel_id: str = None):
         pass
 
     @abstractmethod
@@ -48,6 +52,10 @@ class AnalyticsRepository(ABC):
 
     @abstractmethod
     def delete_credentials(self, platform: str):
+        pass
+
+    @abstractmethod
+    def update_clip_youtube_info(self, clip_id: str, youtube_video_id: str, youtube_url: str):
         pass
 
     @abstractmethod
@@ -130,9 +138,14 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                         refresh_token TEXT NOT NULL,
                         token_expiry REAL NOT NULL,
                         channel_name TEXT,
+                        channel_id TEXT,
                         updated_at REAL NOT NULL
                     )
                 """)
+                cursor.execute("PRAGMA table_info(creator_credentials)")
+                cred_columns = [row[1] for row in cursor.fetchall()]
+                if "channel_id" not in cred_columns:
+                    cursor.execute("ALTER TABLE creator_credentials ADD COLUMN channel_id TEXT")
                 
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS clip_analytics_snapshots (
@@ -193,7 +206,9 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                     "music_description": "TEXT",
                     "volume_pct": "INTEGER",
                     "music_source": "TEXT",
-                    "has_music": "INTEGER"
+                    "has_music": "INTEGER",
+                    "youtube_video_id": "TEXT",
+                    "youtube_url": "TEXT"
                 }
                 for col, col_type in new_cols.items():
                     if col not in columns:
@@ -311,16 +326,16 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         finally:
             conn.close()
 
-    def save_credentials(self, platform: str, access_token: str, refresh_token: str, token_expiry: float, channel_name: str = None):
+    def save_credentials(self, platform: str, access_token: str, refresh_token: str, token_expiry: float, channel_name: str = None, channel_id: str = None):
         conn = self._get_connection()
         try:
             with conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR REPLACE INTO creator_credentials (
-                        platform, access_token, refresh_token, token_expiry, channel_name, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                """, (platform, access_token, refresh_token, token_expiry, channel_name, time.time()))
+                        platform, access_token, refresh_token, token_expiry, channel_name, channel_id, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (platform, access_token, refresh_token, token_expiry, channel_name, channel_id, time.time()))
         finally:
             conn.close()
 
@@ -330,7 +345,7 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT platform, access_token, refresh_token, token_expiry, channel_name, updated_at
+                SELECT platform, access_token, refresh_token, token_expiry, channel_name, channel_id, updated_at
                 FROM creator_credentials
                 WHERE platform = ?
             """, (platform,))
@@ -345,6 +360,19 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             with conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM creator_credentials WHERE platform = ?", (platform,))
+        finally:
+            conn.close()
+
+    def update_clip_youtube_info(self, clip_id: str, youtube_video_id: str, youtube_url: str):
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE clip_analytics
+                    SET youtube_video_id = ?, youtube_url = ?
+                    WHERE clip_id = ?
+                """, (youtube_video_id, youtube_url, clip_id))
         finally:
             conn.close()
 
@@ -460,6 +488,35 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                     c["upload_package"] = None
                 clips.append(c)
             return clips
+        finally:
+            conn.close()
+
+    def get_clip_by_id(self, clip_id: str) -> Optional[dict]:
+        conn = self._get_connection()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM clip_analytics
+                WHERE clip_id = ?
+            """, (clip_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            c = dict(row)
+            try:
+                c["detailed_scores"] = json.loads(c["detailed_scores"])
+            except Exception:
+                c["detailed_scores"] = {}
+            try:
+                c["shorts_tags"] = json.loads(c["shorts_tags"]) if c["shorts_tags"] else []
+            except Exception:
+                c["shorts_tags"] = []
+            try:
+                c["upload_package"] = json.loads(c["upload_package"]) if c.get("upload_package") else None
+            except Exception:
+                c["upload_package"] = None
+            return c
         finally:
             conn.close()
 
