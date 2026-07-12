@@ -818,6 +818,25 @@ async def get_transcript_metrics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/personal/profile")
+async def get_personal_profile(version: Optional[str] = "default"):
+    """Fetches the Personalized Creator AI profile containing style and scoring weights."""
+    try:
+        from creator_profile import get_creator_profile
+        profile = get_creator_profile(version)
+        return {"status": "success", "profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/personal/profile/rebuild")
+async def rebuild_personal_profile(version: Optional[str] = "default"):
+    """Forces rebuild of the creator profile based on latest database records."""
+    try:
+        from creator_profile import rebuild_creator_profile
+        profile = rebuild_creator_profile(version)
+        return {"status": "success", "profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Serve frontend static files — must be mounted AFTER all /api/* routes

@@ -74,6 +74,14 @@ class AnalyticsRepository(ABC):
     def get_transcript_metrics_summary(self) -> dict:
         pass
 
+    @abstractmethod
+    def save_creator_profile_state(self, profile_version: str, style_preferences: dict, virality_weights: dict):
+        pass
+
+    @abstractmethod
+    def get_creator_profile_state(self, profile_version: str) -> Optional[dict]:
+        pass
+
 class SqliteAnalyticsRepository(AnalyticsRepository):
     def __init__(self, db_path: str = None):
         if db_path is None:
@@ -168,6 +176,15 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                         fallback_used INTEGER DEFAULT 0,
                         duration REAL DEFAULT 0.0,
                         created_at REAL NOT NULL
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_profile_state (
+                        profile_version TEXT PRIMARY KEY,
+                        style_preferences TEXT NOT NULL,
+                        virality_weights TEXT NOT NULL,
+                        last_updated REAL NOT NULL
                     )
                 """)
                 
@@ -527,6 +544,52 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
             except Exception:
                 c["upload_package"] = None
             return c
+        finally:
+            conn.close()
+
+    def save_creator_profile_state(self, profile_version: str, style_preferences: dict, virality_weights: dict):
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO creator_profile_state (profile_version, style_preferences, virality_weights, last_updated)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(profile_version) DO UPDATE SET
+                        style_preferences = excluded.style_preferences,
+                        virality_weights = excluded.virality_weights,
+                        last_updated = excluded.last_updated
+                """, (
+                    profile_version,
+                    json.dumps(style_preferences),
+                    json.dumps(virality_weights),
+                    time.time()
+                ))
+        finally:
+            conn.close()
+
+    def get_creator_profile_state(self, profile_version: str) -> Optional[dict]:
+        conn = self._get_connection()
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM creator_profile_state
+                WHERE profile_version = ?
+            """, (profile_version,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            p = dict(row)
+            try:
+                p["style_preferences"] = json.loads(p["style_preferences"])
+            except Exception:
+                p["style_preferences"] = {}
+            try:
+                p["virality_weights"] = json.loads(p["virality_weights"])
+            except Exception:
+                p["virality_weights"] = {}
+            return p
         finally:
             conn.close()
 
