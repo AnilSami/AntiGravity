@@ -1009,32 +1009,6 @@ clipsGrid.addEventListener('click', async (e) => {
         return;
     }
 
-    // 5. YouTube Connect Popup Handler
-    const connectPopupBtn = e.target.closest('.btn-connect-popup');
-    if (connectPopupBtn) {
-        e.preventDefault();
-        const popup = window.open('', 'Connect YouTube', 'width=600,height=600');
-        if (popup) {
-            popup.document.write('<div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;"><h3>Connecting to YouTube...</h3><p>Please wait while we set up your secure session.</p></div>');
-            fetch(`${BACKEND_URL}/api/youtube/auth`)
-                .then(r => {
-                    if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
-                    return r.json();
-                })
-                .then(data => {
-                    if (data.auth_url) {
-                        popup.location.href = data.auth_url;
-                    } else {
-                        popup.document.body.innerHTML = '<div style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #ff4757;"><h3>Authentication Error</h3><p>Invalid response received from the server.</p></div>';
-                    }
-                })
-                .catch(err => {
-                    console.error("Failed to connect to YouTube", err);
-                    popup.document.body.innerHTML = '<div style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #ff4757;"><h3>Connection Failed</h3><p>Could not reach the authentication server. Please try again.</p></div>';
-                });
-        }
-        return;
-    }
 
     // 6. YouTube Upload Handler
     const uploadYoutubeBtn = e.target.closest('.btn-upload-youtube');
@@ -1253,6 +1227,15 @@ async function redirectToYoutubeAuth() {
         alert('Failed to connect to YouTube. Please check your internet connection.');
     }
 }
+
+// Global click delegation for all Connect YouTube buttons/links (removes popups and redirects current window)
+document.addEventListener('click', async (e) => {
+    const connectBtn = e.target.closest('.btn-connect-popup');
+    if (connectBtn) {
+        e.preventDefault();
+        await redirectToYoutubeAuth();
+    }
+});
 
 const btnConnectYoutube = document.getElementById('btn-connect-youtube');
 const btnSyncYoutube = document.getElementById('btn-sync-youtube');
