@@ -1073,6 +1073,9 @@ Return ONLY a raw JSON object with a "candidates" key containing your findings. 
 CURATOR_AGENT_PROMPT_TEMPLATE = """\
 You are "The Content Curator", a senior short-form video producer. Your task is to review the candidate clips proposed by the Clip Scout, deduplicate them, and select every candidate clip that meets our strict quality bar.
 
+{creator_profile_context}
+{few_shot_examples}
+
 A clip only survives and should be selected if it passes ALL of these quality criteria:
 1. **Duration**: Must be between 38 and 58 seconds (if a candidate clip is shorter, you must extend its end boundary to land on a natural sentence/punctuation pause until its duration is at least 38 seconds).
 2. **Hook**: Has a strong hook in the first line (begins with a high-energy opener, a question, or a surprising statement; subtract 5 points from any candidate that begins with a slow narrative buildup, lists raw data/dates, or discusses dry technical mechanisms).
@@ -2327,9 +2330,36 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
         try:
             logger.info("Running Agent 2: The Content Curator...")
             candidates_json = json.dumps(candidates, indent=2)
+            # Fetch Personalized Creator AI profile context & few-shot examples
+            profile_context = ""
+            few_shot_examples = ""
+            try:
+                from creator_profile import get_creator_profile
+                from retrieval_service import get_few_shot_prompt_context
+                
+                profile = get_creator_profile()
+                style_prefs = profile.get("style_preferences", {})
+                
+                profile_context = (
+                    f"\n--- PERSONALIZED CREATOR PREFERENCES (ALIGN TO THESE STYLE VALUES) ---\n"
+                    f"  - Target Clip Duration: {style_prefs.get('clip_duration_secs', 42.0)} seconds\n"
+                    f"  - Preferred Subtitle Style: {style_prefs.get('subtitle_style', 'kinetic')}\n"
+                    f"  - Preferred Emotion/Tone: {style_prefs.get('primary_emotion', 'engaging')}\n"
+                    f"  - Average Speech Reading Speed: {style_prefs.get('reading_speed_wpm', 180.0)} words/minute\n"
+                    f"  - Expected Words Per Chunk: {style_prefs.get('words_per_chunk', 2.5)} words\n"
+                    f"  - Preferred Energy Level: {style_prefs.get('energy_level', 7)}/10\n"
+                )
+                # Use first few candidate titles as a search query for similar successful past clips
+                query_text = " ".join([cand.get("title", "") for cand in candidates[:3]])
+                few_shot_examples = get_few_shot_prompt_context(query_text, limit=2)
+            except Exception as e:
+                logger.debug(f"Could not load personalized context for Curator Agent: {e}")
+
             curator_prompt = CURATOR_AGENT_PROMPT_TEMPLATE.format(
                 candidates_json=candidates_json,
-                transcript=transcript
+                transcript=transcript,
+                creator_profile_context=profile_context,
+                few_shot_examples=few_shot_examples
             )
             if num_clips is not None:
                 curator_prompt += f"\n\nIMPORTANT: The user explicitly requested to select at most {num_clips} clip(s). You MUST select a maximum of {num_clips} of the very best candidate(s)."
