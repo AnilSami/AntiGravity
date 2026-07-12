@@ -187,6 +187,99 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
                         last_updated REAL NOT NULL
                     )
                 """)
+
+                # Creator Brain Profile Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_brain (
+                        brain_id TEXT PRIMARY KEY,
+                        creator_profile TEXT NOT NULL,
+                        audience_profile TEXT NOT NULL,
+                        goals TEXT NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                """)
+
+                # Styles and Editing Preferences Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_preferences (
+                        pref_id TEXT PRIMARY KEY,
+                        style_prefs TEXT NOT NULL,
+                        editing_prefs TEXT NOT NULL,
+                        music_prefs TEXT NOT NULL,
+                        publishing_schedule TEXT NOT NULL,
+                        updated_at REAL NOT NULL
+                    )
+                """)
+
+                # Short & Long-Term Memory Logs
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_memory (
+                        memory_id TEXT PRIMARY KEY,
+                        category TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        metadata TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                """)
+
+                # Lessons Learned and Anti-Patterns Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_lessons (
+                        lesson_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        concept TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        source_clip_id TEXT,
+                        created_at REAL NOT NULL
+                    )
+                """)
+
+                # Virality Predictions Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_predictions (
+                        clip_id TEXT PRIMARY KEY,
+                        predicted_score REAL NOT NULL,
+                        detailed_predictions TEXT NOT NULL,
+                        target_audience TEXT NOT NULL,
+                        reasoning TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                """)
+
+                # Reflection logs Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS creator_reflections (
+                        reflection_id TEXT PRIMARY KEY,
+                        clip_id TEXT NOT NULL,
+                        views_diff INTEGER NOT NULL,
+                        retention_diff REAL NOT NULL,
+                        evaluation TEXT NOT NULL,
+                        weight_adjustments TEXT NOT NULL,
+                        created_at REAL NOT NULL,
+                        FOREIGN KEY (clip_id) REFERENCES creator_predictions(clip_id)
+                    )
+                """)
+
+                # Indexed Patterns Tables
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS successful_patterns (
+                        pattern_id TEXT PRIMARY KEY,
+                        pattern_type TEXT NOT NULL,
+                        text_content TEXT NOT NULL,
+                        success_metrics TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS failed_patterns (
+                        pattern_id TEXT PRIMARY KEY,
+                        pattern_type TEXT NOT NULL,
+                        text_content TEXT NOT NULL,
+                        fail_reason TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    )
+                """)
                 
                 # Dynamic schema migration for older databases
                 cursor.execute("PRAGMA table_info(clip_analytics)")
