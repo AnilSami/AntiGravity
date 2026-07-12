@@ -30,7 +30,7 @@ async function checkYoutubeStatus() {
                 globalStatusBar.style.background = 'rgba(255, 71, 87, 0.15)';
                 globalStatusBar.style.border = '1px solid rgba(255, 71, 87, 0.3)';
                 globalStatusBar.style.color = '#ff4757';
-                globalStatusBar.innerHTML = `YouTube: ❌ Not connected — <a href="${BACKEND_URL}/api/youtube/auth" target="_blank" rel="noopener noreferrer" style="color: #ff4757; text-decoration: underline; font-weight: bold;">Connect now</a>`;
+                globalStatusBar.innerHTML = `YouTube: ❌ Not connected — <a href="#" class="btn-connect-popup" style="color: #ff4757; text-decoration: underline; font-weight: bold;">Connect now</a>`;
             }
         }
         
@@ -1013,7 +1013,26 @@ clipsGrid.addEventListener('click', async (e) => {
     const connectPopupBtn = e.target.closest('.btn-connect-popup');
     if (connectPopupBtn) {
         e.preventDefault();
-        window.open(`${BACKEND_URL}/api/youtube/auth`, 'Connect YouTube', 'width=600,height=600');
+        const popup = window.open('', 'Connect YouTube', 'width=600,height=600');
+        if (popup) {
+            popup.document.write('<div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;"><h3>Connecting to YouTube...</h3><p>Please wait while we set up your secure session.</p></div>');
+            fetch(`${BACKEND_URL}/api/youtube/auth`)
+                .then(r => {
+                    if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+                    return r.json();
+                })
+                .then(data => {
+                    if (data.auth_url) {
+                        popup.location.href = data.auth_url;
+                    } else {
+                        popup.document.body.innerHTML = '<div style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #ff4757;"><h3>Authentication Error</h3><p>Invalid response received from the server.</p></div>';
+                    }
+                })
+                .catch(err => {
+                    console.error("Failed to connect to YouTube", err);
+                    popup.document.body.innerHTML = '<div style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #ff4757;"><h3>Connection Failed</h3><p>Could not reach the authentication server. Please try again.</p></div>';
+                });
+        }
         return;
     }
 
@@ -1219,15 +1238,29 @@ if (seedExpBtn) {
 // PHASE 11A: YOUTUBE LEARNING LOOP
 // ==========================================
 
+async function redirectToYoutubeAuth() {
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/youtube/auth`);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        if (data.auth_url) {
+            window.location.href = data.auth_url;
+        } else {
+            alert('Invalid authentication response from server.');
+        }
+    } catch (err) {
+        console.error('Error fetching YouTube auth URL:', err);
+        alert('Failed to connect to YouTube. Please check your internet connection.');
+    }
+}
+
 const btnConnectYoutube = document.getElementById('btn-connect-youtube');
 const btnSyncYoutube = document.getElementById('btn-sync-youtube');
 const btnExportDataset = document.getElementById('btn-export-dataset');
 const syncSuccessMsg = document.getElementById('sync-success-msg');
 
 if (btnConnectYoutube) {
-    btnConnectYoutube.addEventListener('click', () => {
-        window.location.href = `${BACKEND_URL}/api/youtube/auth`;
-    });
+    btnConnectYoutube.addEventListener('click', redirectToYoutubeAuth);
 }
 
 if (btnSyncYoutube) {
@@ -1329,9 +1362,7 @@ async function fetchYoutubeDashboard() {
             statusContainer.innerHTML = `<button id="btn-connect-youtube" class="btn btn-primary btn-small">Connect YouTube Channel 🔗</button>`;
             const newBtn = document.getElementById('btn-connect-youtube');
             if (newBtn) {
-                newBtn.addEventListener('click', () => {
-                    window.location.href = `${BACKEND_URL}/api/youtube/auth`;
-                });
+                newBtn.addEventListener('click', redirectToYoutubeAuth);
             }
             if (btnSyncYoutube) btnSyncYoutube.disabled = true;
         }
