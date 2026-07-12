@@ -459,6 +459,16 @@ class SqliteAnalyticsRepository(AnalyticsRepository):
         finally:
             conn.close()
 
+    def get_last_sync_time(self) -> float:
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(snapshot_time) FROM clip_analytics_snapshots")
+            val = cursor.fetchone()[0]
+            return val if val else 0.0
+        finally:
+            conn.close()
+
     def get_clips_by_video_id(self, video_id: str) -> list[dict]:
         conn = self._get_connection()
         try:

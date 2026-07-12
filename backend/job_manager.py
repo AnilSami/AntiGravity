@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from analyzer import get_video_id, fetch_transcript_list, analyze_with_gemini, check_youtube_availability
 from clipper import download_video, extract_clip, check_ffmpeg
+from config import settings
 import re
 
 logger = logging.getLogger("job_manager")
@@ -127,11 +128,11 @@ EMOJI_DICTIONARY = {
     "real": "💯",
 }
 
-# Number of words per subtitle chunk shown on screen at once
-SUBTITLE_CHUNK_SIZE = 2
+# Number of words per subtitle chunk shown on screen at once (legacy; chunking is now dynamic)
+SUBTITLE_CHUNK_SIZE = settings.SUBTITLE_CHUNK_SIZE
 
 # Subtitle delay shift in seconds to align subtitles with audio
-SUBTITLE_DELAY = 0.05
+SUBTITLE_DELAY = settings.SUBTITLE_DELAY_SECS
 
 
 def format_ass_time(seconds: float) -> str:
@@ -201,8 +202,8 @@ def generate_ass(
         
         header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: {settings.ASS_PLAY_RES_X}
+PlayResY: {settings.ASS_PLAY_RES_Y}
 WrapStyle: 0
 
 [V4+ Styles]
@@ -274,11 +275,11 @@ Style: Default,{font_name},{font_size},{primary_color_ass},&H0000FFFF&,{outline_
                 first_word = current_chunk[0]
                 
                 # Split conditions
-                cond_word_count = len(current_chunk) >= 4
+                cond_word_count = len(current_chunk) >= settings.SUBTITLE_MAX_WORDS_PER_CHUNK
                 prev_text_clean = prev_word["text"].strip()
                 cond_punctuation = bool(prev_text_clean and prev_text_clean[-1] in ['.', ',', '?', '!', ';', ':'])
-                cond_time_gap = (w["start"] - prev_word["end"]) > 0.35
-                cond_duration = (w["end"] - first_word["start"]) > 3.0
+                cond_time_gap = (w["start"] - prev_word["end"]) > settings.SUBTITLE_GAP_SPLIT_SECS
+                cond_duration = (w["end"] - first_word["start"]) > settings.SUBTITLE_MAX_DURATION_SECS
                 
                 # WPM check
                 dur = w["end"] - first_word["start"]
@@ -295,14 +296,14 @@ Style: Default,{font_name},{font_size},{primary_color_ass},&H0000FFFF&,{outline_
             dynamic_word_chunks.append(current_chunk)
 
         # Resolve Auto Subtitle Style
-        if subtitle_style == "auto":
+        if resolved_style == "auto":
             total_words = len(words_list)
             total_duration = end_time - start_time
             overall_wpm = (total_words / total_duration * 60) if total_duration > 0 else 0
-            
-            if overall_wpm > 200:
+
+            if overall_wpm > settings.SUBTITLE_WPM_KARAOKE_THRESHOLD:
                 resolved_style = "karaoke"
-            elif overall_wpm < 130:
+            elif overall_wpm < settings.SUBTITLE_WPM_CLASSIC_THRESHOLD:
                 resolved_style = "classic"
             else:
                 resolved_style = "kinetic"
@@ -1169,9 +1170,9 @@ This report summarizes the clip filtering pipeline stages and details how many c
                                 "subtitle_style": "classic"
                             }
 
-                    from subtitle_detector import detect_subtitle_zone, has_subtitles
-                    subs_detected = has_subtitles(video_path)
-                    subs_height = detect_subtitle_zone(video_path) if subs_detected else 0
+                    from subtitle_detector import detect_subtitle_zone
+                    subs_height = detect_subtitle_zone(video_path)
+                    subs_detected = (subs_height > 0)
                     metadata_dict = {
                         "debug_camera_tracking": debug_camera_tracking,
                         "subtitle_zone_height": subs_height,

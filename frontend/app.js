@@ -1,6 +1,9 @@
-const BACKEND_URL = window.location.origin.startsWith('file:') 
-    ? 'http://127.0.0.1:8000' 
-    : window.location.origin;
+// API base URL resolution (priority order):
+//   1. window.CLIPMIND_API_URL — injected by Cloudflare Pages env var via _worker.js or _headers
+//   2. Same-origin — when served directly from the FastAPI backend
+//   3. Localhost fallback — for local file:// development
+const BACKEND_URL = window.CLIPMIND_API_URL
+    || (window.location.origin.startsWith('file:') ? 'http://127.0.0.1:8000' : window.location.origin);
 
 // Global YouTube OAuth Connection State
 window.youtubeConnected = false;
@@ -27,7 +30,7 @@ async function checkYoutubeStatus() {
                 globalStatusBar.style.background = 'rgba(255, 71, 87, 0.15)';
                 globalStatusBar.style.border = '1px solid rgba(255, 71, 87, 0.3)';
                 globalStatusBar.style.color = '#ff4757';
-                globalStatusBar.innerHTML = `YouTube: ❌ Not connected — <a href="${BACKEND_URL}/api/youtube/auth" target="_blank" style="color: #ff4757; text-decoration: underline; font-weight: bold;">Connect now</a>`;
+                globalStatusBar.innerHTML = `YouTube: ❌ Not connected — <a href="${BACKEND_URL}/api/youtube/auth" target="_blank" rel="noopener noreferrer" style="color: #ff4757; text-decoration: underline; font-weight: bold;">Connect now</a>`;
             }
         }
         
@@ -49,13 +52,13 @@ function updateAllClipCardButtons() {
         
         if (window.youtubeConnected) {
             container.innerHTML = `
-                <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                <button type="button" class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
                     Upload to YouTube ▶
                 </button>
             `;
         } else {
             container.innerHTML = `
-                <button class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
+                <button type="button" class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
                     Connect YouTube
                 </button>
             `;
@@ -875,15 +878,15 @@ SEARCH INTENT: ${intent}`;
                     </a>
                     <div class="youtube-upload-container" id="yt-container-${clip.id}" style="flex: 1; display: flex;">
                         ${clip.youtube_video_id ? `
-                            <a href="${escapeHtml(clip.youtube_url)}" target="_blank" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
+                            <a href="${escapeHtml(clip.youtube_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
                                 View on YouTube 🚀
                             </a>
                         ` : (window.youtubeConnected ? `
-                            <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clip.id}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                            <button type="button" class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clip.id}" style="flex: 1; justify-content: center; background: #ff0000; border-color: #ff0000;">
                                 Upload to YouTube ▶
                             </button>
                         ` : `
-                            <button class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
+                            <button type="button" class="btn btn-secondary btn-small btn-connect-popup" style="flex: 1; justify-content: center;">
                                 Connect YouTube
                             </button>
                         `)}
@@ -1009,6 +1012,7 @@ clipsGrid.addEventListener('click', async (e) => {
     // 5. YouTube Connect Popup Handler
     const connectPopupBtn = e.target.closest('.btn-connect-popup');
     if (connectPopupBtn) {
+        e.preventDefault();
         window.open(`${BACKEND_URL}/api/youtube/auth`, 'Connect YouTube', 'width=600,height=600');
         return;
     }
@@ -1016,6 +1020,7 @@ clipsGrid.addEventListener('click', async (e) => {
     // 6. YouTube Upload Handler
     const uploadYoutubeBtn = e.target.closest('.btn-upload-youtube');
     if (uploadYoutubeBtn) {
+        e.preventDefault();
         const clipId = uploadYoutubeBtn.getAttribute('data-clip-id');
         const container = document.getElementById(`yt-container-${clipId}`);
         if (!container) return;
@@ -1050,7 +1055,7 @@ clipsGrid.addEventListener('click', async (e) => {
 
             // Success
             container.innerHTML = `
-                <a href="${escapeHtml(data.youtube_url)}" target="_blank" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
+                <a href="${escapeHtml(data.youtube_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-small" style="flex: 1; text-align: center; justify-content: center; color: #00bcd4; font-weight: bold;">
                     View on YouTube 🚀
                 </a>
             `;
@@ -1060,7 +1065,7 @@ clipsGrid.addEventListener('click', async (e) => {
             container.innerHTML = `
                 <div style="display: flex; flex-direction: column; gap: 0.25rem; width: 100%;">
                     <span style="color: #ff4757; font-size: 0.75rem; text-align: center;">Error: ${escapeHtml(err.message)}</span>
-                    <button class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="width: 100%; justify-content: center; background: #ff0000; border-color: #ff0000;">
+                    <button type="button" class="btn btn-primary btn-small btn-upload-youtube" data-clip-id="${clipId}" style="width: 100%; justify-content: center; background: #ff0000; border-color: #ff0000;">
                         Retry Upload ▶
                     </button>
                 </div>
@@ -1329,6 +1334,25 @@ async function fetchYoutubeDashboard() {
                 });
             }
             if (btnSyncYoutube) btnSyncYoutube.disabled = true;
+        }
+        
+        // 2.5 Update Delay Note and Last Sync Time
+        const delayNote = document.getElementById('youtube-delay-note');
+        if (delayNote) {
+            if (data.connected) {
+                delayNote.style.display = 'block';
+                const syncSpan = document.getElementById('yt-last-sync-time');
+                if (syncSpan) {
+                    if (data.last_sync_time && data.last_sync_time > 0) {
+                        const dateObj = new Date(data.last_sync_time * 1000);
+                        syncSpan.textContent = dateObj.toLocaleString();
+                    } else {
+                        syncSpan.textContent = 'Not synced yet';
+                    }
+                }
+            } else {
+                delayNote.style.display = 'none';
+            }
         }
         
         // 2. Data visibility

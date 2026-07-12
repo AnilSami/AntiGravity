@@ -11,10 +11,10 @@ def detect_subtitle_zone(video_path: str) -> int:
     Returns the height of the subtitle zone in pixels, measured from the bottom of the frame,
     or 0 if no subtitle zone is detected.
     
-    Uses a dual-signal approach calibrated against production TrueType-rendered subtitles:
-      1. Canny edge density > 3% (anti-aliased text produces ~5-10% density, not 15%)
-      2. Local variance > 1000 (text regions have high per-row variance from letter shapes)
-    Both signals must agree for a band to count as a subtitle candidate.
+    Supports:
+      - Bottom subtitles (returns height > 0 to trigger cropping/exclusion)
+      - Middle subtitles (returns 2 to indicate detection without triggering excessive crop)
+      - Static graphic filtering (filters out logos, scoreboards, and watermarks using always-on masked edge analysis)
     """
     if not os.path.exists(video_path):
         logger.warning(f"Video file does not exist: {video_path}")
@@ -30,24 +30,33 @@ def detect_subtitle_zone(video_path: str) -> int:
         cap.release()
         return 0
 
-    # 1. Sample 20 evenly spaced frames
-    num_samples = 20
+    # Sample 25 evenly spaced frames
+    num_samples = 25
     if total_frames > num_samples:
         frame_indices = [int(i * (total_frames - 1) / (num_samples - 1)) for i in range(num_samples)]
     else:
         frame_indices = list(range(total_frames))
 
-    band_h = 40
-    detected_positions = []
-    detected_brightness = []
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
-    # Thresholds calibrated from production TrueType font tests:
-    # - Anti-aliased text at 32px font on 1280x720 produces 5-10% Canny(50,150) edge density
-    # - The same text produces per-row variance of 1900-4300
-    # - Plain video backgrounds without text: 0-2.5% edge density, variance < 500
-    EDGE_DENSITY_THRESHOLD = 0.03      # 3% (was 15% - too high for anti-aliased text)
-    VARIANCE_THRESHOLD = 1000          # Per-row variance (text vs background discriminator)
-    CONTRAST_THRESHOLD = 30.0          # Minimum std dev of band brightness
+    # Scale-invariant band parameters
+    band_h = int(height * 0.05)
+    step_y = int(band_h * 0.25)
+    if band_h < 15:
+        band_h = 15
+    if step_y < 4:
+        step_y = 4
+
+    # Calibrated thresholds:
+    EDGE_DENSITY_THRESHOLD = 0.025      # 2.5% edge density
+    VARIANCE_THRESHOLD = 900           # Per-row letter shape variance
+    CONTRAST_THRESHOLD = 25.0          # Minimum standard deviation contrast
+    MAX_ALWAYS_ON_MASKED = 250         # Max always-on masked edges to reject static logos/watermarks
+
+    # Store detected slices: y_offset -> list of (band_gray, band_edges, mask)
+    detected_slices = {}
+    detected_scores = {}
 
     for idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -55,83 +64,121 @@ def detect_subtitle_zone(video_path: str) -> int:
         if not ret:
             continue
 
-        height, width = frame.shape[:2]
-        bottom_20_start = int(height * 0.8)
-        bottom_zone = frame[bottom_20_start:height, :]
-        
-        # 2. Convert bottom zone to grayscale and detect edges
-        gray_zone = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray_zone, 50, 150)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
 
-        # 3. Scan bottom 20% in overlapping bands of height 40px
-        bottom_h = height - bottom_20_start
-        best_y = -1
-        best_score = 0.0
-        best_brightness = 0.0
+        # Scan from 25% to 95% height of the frame
+        start_y = int(height * 0.25)
+        end_y = int(height * 0.95)
 
-        for y in range(0, bottom_h - band_h + 1, 5):
+        for y in range(start_y, end_y - band_h + 1, step_y):
+            band_gray = gray[y : y + band_h, :]
             band_edges = edges[y : y + band_h, :]
-            band_gray = gray_zone[y : y + band_h, :]
-            
-            # Signal 1: Canny edge density
-            density = np.mean(band_edges > 0)
-            
-            # Signal 2: Per-row variance (high for text, low for uniform areas)
-            variance = np.mean(np.var(band_gray.astype(np.float32), axis=1))
-            
-            # Signal 3: Overall contrast (std dev of brightness)
-            contrast = np.std(band_gray.astype(np.float32))
-            
-            # Dual-signal requirement: both edge density AND variance must pass
-            # This prevents false positives from noisy backgrounds (high edges but low variance)
-            # and from gradient backgrounds (high variance but low edges)
-            if density > EDGE_DENSITY_THRESHOLD and variance > VARIANCE_THRESHOLD and contrast > CONTRAST_THRESHOLD:
-                # Score combines both signals for ranking
-                score = density * 0.5 + (variance / 10000.0) * 0.3 + (contrast / 100.0) * 0.2
-                if score > best_score:
-                    best_score = score
-                    best_y = y
-                    best_brightness = float(np.mean(band_gray))
 
-        if best_y != -1:
-            detected_positions.append(best_y)
-            detected_brightness.append(best_brightness)
+            density = np.mean(band_edges > 0)
+            variance = np.mean(np.var(band_gray.astype(np.float32), axis=1))
+            contrast = np.std(band_gray.astype(np.float32))
+
+            # Count letter blobs and horizontal/vertical features
+            contours, _ = cv2.findContours(band_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # First pass: collect contours and their baselines
+            valid_contours = []
+            baselines = []
+            for c in contours:
+                x_c, y_c, w_c, h_c = cv2.boundingRect(c)
+                if (0.15 * band_h <= h_c <= 0.85 * band_h) and (0.05 * band_h <= w_c <= 1.0 * band_h):
+                    if 0.15 <= w_c / h_c <= 2.5:
+                        valid_contours.append((c, x_c, y_c, w_c, h_c))
+                        baselines.append(y_c + h_c)
+            
+            letter_count = len(valid_contours)
+            x_coords = []
+            mask = np.zeros(band_edges.shape, dtype=np.uint8)
+            
+            # Second pass: only keep contours aligned with the median baseline (to ignore background details)
+            if valid_contours:
+                median_base = np.median(baselines)
+                for c, x_c, y_c, w_c, h_c in valid_contours:
+                    y_base = y_c + h_c
+                    tolerance = max(int(band_h * 0.12), 3)
+                    if abs(y_base - median_base) <= tolerance:
+                        x_coords.append((x_c, x_c + w_c))
+                        cv2.drawContours(mask, [c], -1, 255, -1)
+
+            # Check horizontal centering, span, and vertical baseline alignment
+            span_ok = False
+            center_ok = False
+            baseline_ok = False
+
+            if x_coords:
+                min_x = min(item[0] for item in x_coords)
+                max_x = max(item[1] for item in x_coords)
+                span = max_x - min_x
+                center = (min_x + max_x) / 2
+                span_pct = span / width
+                center_pct = center / width
+                
+                # Subtitles span at least 22% of width and are centered
+                span_ok = (span_pct >= 0.22)
+                center_ok = (0.35 <= center_pct <= 0.65)
+                
+                # Baseline vertical alignment (std dev of bottom y-coordinates of contours)
+                if len(baselines) >= 5:
+                    baseline_std = np.std(baselines)
+                    baseline_ok = (baseline_std <= 9.5)
+
+            if letter_count >= 5 and span_ok and center_ok and baseline_ok and density > EDGE_DENSITY_THRESHOLD and variance > VARIANCE_THRESHOLD and contrast > CONTRAST_THRESHOLD:
+                if y not in detected_slices:
+                    detected_slices[y] = []
+                    detected_scores[y] = []
+                
+                # Mask the dilated edges with the contour mask
+                dilated_edges = cv2.dilate(band_edges, np.ones((3, 3), np.uint8))
+                masked_edges = cv2.bitwise_and(dilated_edges, dilated_edges, mask=mask)
+                
+                detected_slices[y].append(masked_edges)
+                score = density * 0.5 + (variance / 10000.0) * 0.3 + (contrast / 100.0) * 0.2
+                detected_scores[y].append(score)
 
     cap.release()
 
-    # 4. If 50% or more of sampled frames show a subtitle band at the same vertical position
-    # (Lowered from 60% because subtitles have gaps between sentences)
-    min_detections = max(int(0.50 * len(frame_indices)), 1) if frame_indices else 10
-    if len(detected_positions) >= min_detections:
-        # Find consistent positions (within ±15 pixels — slightly wider for subtitle position variation)
-        consistent_y = None
-        max_consistent_count = 0
-        consistent_brightness_list = []
+    # Require detections in at least 30% of sampled frames
+    min_detections = max(int(0.30 * len(frame_indices)), 2) if frame_indices else 5
+    
+    valid_zones = []
 
-        for pos in set(detected_positions):
-            # Find all detections within 15 pixels of this position
-            indices = [i for i, p in enumerate(detected_positions) if abs(p - pos) <= 15]
-            count = len(indices)
-            if count >= min_detections and count > max_consistent_count:
-                # Also check consistent brightness pattern (subtitle background box or stable brightness)
-                brightness_vals = [detected_brightness[i] for i in indices]
-                brightness_std = np.std(brightness_vals) if len(brightness_vals) > 1 else 0.0
-                
-                # A consistent background or text pattern typically has stable average brightness (std < 30.0)
-                if brightness_std < 30.0:
-                    max_consistent_count = count
-                    consistent_y = pos
-                    consistent_brightness_list = brightness_vals
+    for y, slices in detected_slices.items():
+        if len(slices) >= min_detections:
+            # Calculate always-on masked edges to identify static logos/watermarks
+            mean_edges = np.mean(np.array(slices) > 0, axis=0)
+            always_on_count = np.sum(mean_edges > 0.70)
 
-        if consistent_y is not None:
-            # Subtitle zone starts at bottom_20_start + consistent_y.
-            # Height measured from bottom of the frame is height - (bottom_20_start + consistent_y)
-            subtitle_zone_height = height - (bottom_20_start + consistent_y)
-            logger.info(f"Subtitle zone detected at y-offset {consistent_y} (height: {subtitle_zone_height}px from bottom, std_brightness: {np.std(consistent_brightness_list):.2f})")
-            return subtitle_zone_height
+            if always_on_count > MAX_ALWAYS_ON_MASKED:
+                logger.info(f"Discarded static graphic at Y={y} (always-on masked edges: {always_on_count})")
+                continue
 
-    logger.info("No consistent subtitle zone detected")
-    return 0
+            avg_score = np.mean(detected_scores[y])
+            valid_zones.append((y, avg_score))
+
+    if not valid_zones:
+        logger.info("No consistent subtitle zone detected")
+        return 0
+
+    # Choose the zone with the highest score
+    best_y, best_score = max(valid_zones, key=lambda x: x[1])
+
+    # Find the top-most Y position among all bands scoring within 85% of the best score
+    # to ensure we capture the full vertical height of the subtitle block.
+    high_scoring_y = [y for y, score in valid_zones if score >= 0.85 * best_score]
+    top_y = min(high_scoring_y) if high_scoring_y else best_y
+
+    subtitle_zone_height = height - top_y
+    if top_y > int(height * 0.65):
+        logger.info(f"Bottom subtitle zone detected at Y={top_y} (height: {subtitle_zone_height}px from bottom, score: {best_score:.4f})")
+    else:
+        logger.info(f"Middle subtitle zone detected at Y={top_y} (height: {subtitle_zone_height}px from bottom, score: {best_score:.4f})")
+    return subtitle_zone_height
 
 def has_subtitles(video_path: str) -> bool:
     """

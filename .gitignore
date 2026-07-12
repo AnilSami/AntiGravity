@@ -2,11 +2,17 @@
 venv/
 .venv/
 env/
+backend/venv/
 __pycache__/
 *.pyc
 
-# Environment Keys
+# Environment Keys — NEVER commit these
 .env
+backend/.env
+
+# OAuth tokens — contain live credentials
+**/youtube_tokens.json
+**/temp_code_verifier.txt
 
 # Application Downloads & Clip Outputs
 backend/output/
@@ -29,3 +35,12 @@ temp/
 *.db-shm
 *.db-journal
 
+# Python cache
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db

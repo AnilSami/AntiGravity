@@ -19,6 +19,7 @@ import urllib.error
 from typing import Optional, List, Dict, Any
 
 from analyzer import LLMResilienceManager, _extract_json_from_response
+from config import settings
 
 logger = logging.getLogger("music_selector")
 
@@ -135,7 +136,7 @@ Return only JSON, no other text."""
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_json=True,
-            model="claude-haiku-4-5"
+            model=settings.SCOUT_MODEL
         )
 
         repaired = _extract_json_from_response(response_text)
@@ -748,7 +749,7 @@ Rules:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_json=True,
-            model="claude-haiku-4-5"
+            model=settings.SCOUT_MODEL
         )
         repaired = _extract_json_from_response(response_text)
 

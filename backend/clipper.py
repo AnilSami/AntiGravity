@@ -11,6 +11,7 @@ import pathlib
 from typing import Optional, Union
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from config import settings
 
 logger = logging.getLogger("clipper")
 
@@ -65,8 +66,14 @@ def has_nvenc() -> bool:
                 _HAS_NVENC = False
     return _HAS_NVENC
 
-def prune_cache(cache_dir: str, max_size_bytes: int = 5 * 1024 * 1024 * 1024, target_size_bytes: int = 3 * 1024 * 1024 * 1024):
+def prune_cache(cache_dir: str,
+                max_size_bytes: int = None,
+                target_size_bytes: int = None):
     """Prunes the cache directory if it exceeds max_size_bytes, down to target_size_bytes."""
+    if max_size_bytes is None:
+        max_size_bytes = settings.CACHE_MAX_SIZE_BYTES
+    if target_size_bytes is None:
+        target_size_bytes = settings.CACHE_TARGET_SIZE_BYTES
     if not os.path.exists(cache_dir):
         return
     files = []
@@ -104,8 +111,8 @@ def record_cache_metric(cache_dir: str, is_hit: bool):
         try:
             with open(stats_file, "r") as f:
                 stats = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Cache stats file is corrupt or unreadable, resetting: {e}")
     if is_hit:
         stats["hits"] = stats.get("hits", 0) + 1
         logger.info(f"[CACHE HIT] Video found in local cache.")
@@ -166,7 +173,7 @@ def download_video(url: str, download_dir: str, progress_callback=None, video_id
             if progress_callback:
                 progress_callback(percent)
 
-    fmt = format_spec or os.getenv("AUDIT_FORMAT_SPEC") or 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+    fmt = format_spec or os.getenv("AUDIT_FORMAT_SPEC") or 'bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best'
 
     ydl_opts = {
         'format': fmt,
@@ -175,7 +182,7 @@ def download_video(url: str, download_dir: str, progress_callback=None, video_id
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [ytdl_hook],
-        'concurrent_fragment_downloads': 8,
+        'concurrent_fragment_downloads': settings.DOWNLOAD_CONCURRENT_FRAGMENTS,
         'buffersize': 1024 * 1024,
         'http_chunk_size': 10485760,
         'nocheckcertificate': True,
@@ -449,15 +456,15 @@ def draw_popup_card(frame: np.ndarray, text: str, emoji: str, scale: float) -> n
 # Phase 13.1 — Production Quality Camera Tracking
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Camera motion constants
-_MAX_CROP_VELOCITY   = 15     # px/frame — maximum horizontal camera speed
-_DEAD_ZONE_PX        = 60     # px — ignore target shifts smaller than this
-_HEADROOM_FRACTION   = 0.12   # face height fraction to shift crop upward
-_FACE_DRIFT_SPEED    = 0.04   # fraction per frame to drift toward center when no face
-_SPEAKER_LOCK_SECS   = 1.0    # seconds a speaker must be continuously active before switch
-_LIP_HISTORY_FRAMES  = 6      # frames to average lip-activity variance over
-_LIP_ACTIVITY_WEIGHT = 3.0    # score multiplier applied when lip activity is high
-_HOLD_SECS_NO_FACE   = 1.5    # seconds to hold last position before drifting (no face)
+# Camera motion constants — sourced from config.py (env-var overridable)
+_MAX_CROP_VELOCITY   = settings.CAMERA_MAX_VELOCITY_PX    # px/frame — maximum horizontal camera speed
+_DEAD_ZONE_PX        = settings.CAMERA_DEAD_ZONE_PX        # px — ignore target shifts smaller than this
+_HEADROOM_FRACTION   = settings.CAMERA_HEADROOM_FRACTION   # face height fraction to shift crop upward
+_FACE_DRIFT_SPEED    = settings.CAMERA_FACE_DRIFT_SPEED    # fraction per frame to drift toward center when no face
+_SPEAKER_LOCK_SECS   = settings.CAMERA_SPEAKER_LOCK_SECS   # seconds a speaker must be continuously active before switch
+_LIP_HISTORY_FRAMES  = settings.CAMERA_LIP_HISTORY_FRAMES  # frames to average lip-activity variance over
+_LIP_ACTIVITY_WEIGHT = settings.CAMERA_LIP_ACTIVITY_WEIGHT # score multiplier applied when lip activity is high
+_HOLD_SECS_NO_FACE   = settings.CAMERA_HOLD_SECS_NO_FACE   # seconds to hold last position before drifting (no face)
 
 
 # ── IoU helper ────────────────────────────────────────────────────────────────
@@ -1456,17 +1463,17 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
         if try_nvenc:
             v_codec = "h264_nvenc"
             preset_val = "p7"
-            quality_args = ["-rc", "vbr", "-cq", "18"]
+            quality_args = ["-rc", "vbr", "-cq", "12"]
             seg_codec = "h264_nvenc"
             seg_preset = "p1"
-            seg_quality = ["-cq", "22"]
+            seg_quality = ["-cq", "16"]
         else:
             v_codec = "libx264"
             preset_val = "slow"
-            quality_args = ["-crf", "16"]
+            quality_args = ["-crf", "12"]
             seg_codec = "libx264"
             seg_preset = "ultrafast"
-            seg_quality = ["-crf", "22"]
+            seg_quality = ["-crf", "16"]
 
         duration = end - start
         width, height = get_video_resolution(input_path)
@@ -1621,8 +1628,12 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
                     height = actual_h
 
                 subtitle_zone_height = metadata.get("subtitle_zone_height", 0) if metadata else 0
-                bottom_exclusion_px = subtitle_zone_height + 10 if subtitle_zone_height > 0 else 0
-                bottom_exclusion_px = min(bottom_exclusion_px, int(height * 0.3))
+                is_middle_subs = (subtitle_zone_height > int(height * 0.35))
+                if is_middle_subs:
+                    bottom_exclusion_px = 0
+                else:
+                    bottom_exclusion_px = subtitle_zone_height + 10 if subtitle_zone_height > 0 else 0
+                    bottom_exclusion_px = min(bottom_exclusion_px, int(height * 0.3))
                 crop_h = height - bottom_exclusion_px
                 crop_w_base = int(crop_h * 9 / 16)
                 crop_w_base = (crop_w_base // 2) * 2
@@ -1684,11 +1695,29 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
                         
                     # Filter complex: burn subtitles and apply highpass/lowpass/fade to audio
                     filter_parts = []
-                    if srt_path:
-                        srt_filter_path = escape_ffmpeg_path(srt_path)
-                        filter_parts.append(f"[0:v]subtitles='{srt_filter_path}'[v]")
+                    
+                    # If middle subtitles are detected, apply boxblur to the subtitle region first
+                    is_middle_subs = (subtitle_zone_height > int(height * 0.35))
+                    if is_middle_subs:
+                        # Map landscape coordinates to resized portrait resolution
+                        y_sub = int((height - subtitle_zone_height) * target_h / height)
+                        # We use 0.05 * height as the band height (same scale-invariant parameter as scan)
+                        h_sub = int((0.05 * height) * target_h / height)
+                        y_sub = max(0, min(target_h - 10, y_sub))
+                        h_sub = max(10, min(target_h - y_sub, h_sub))
+                        
+                        blur_complex = f"[0:v]split[main][sub_clip];[sub_clip]crop={target_w}:{h_sub}:0:{y_sub},boxblur=20:5[blurred];[main][blurred]overlay=0:{y_sub}"
+                        if srt_path:
+                            srt_filter_path = escape_ffmpeg_path(srt_path)
+                            filter_parts.append(f"{blur_complex}[v_blurred];[v_blurred]subtitles='{srt_filter_path}'[v]")
+                        else:
+                            filter_parts.append(f"{blur_complex}[v]")
                     else:
-                        filter_parts.append("[0:v]null[v]")  # Pass-through
+                        if srt_path:
+                            srt_filter_path = escape_ffmpeg_path(srt_path)
+                            filter_parts.append(f"[0:v]subtitles='{srt_filter_path}'[v]")
+                        else:
+                            filter_parts.append("[0:v]null[v]")  # Pass-through
                         
                     if has_aud:
                         filter_parts.append(f"[1:a]{audio_filter}[a]")
@@ -1718,7 +1747,9 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
                     cmd_pipe += [output_path]
                     
                     logger.info(f"Starting concurrent FFmpeg pipeline: {' '.join(cmd_pipe)}")
-                    proc = subprocess.Popen(cmd_pipe, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    ffmpeg_log_path = temp_segment + "_ffmpeg.log"
+                    ffmpeg_log_file = open(ffmpeg_log_path, "w", encoding="utf-8", errors="replace")
+                    proc = subprocess.Popen(cmd_pipe, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=ffmpeg_log_file)
 
                     target_frame_count = int(duration * fps)
                     frame_index = 0
@@ -1798,9 +1829,16 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
                     cap = None
                     
                     # Close stdin to signal EOF and wait for completion
-                    stdout_data, stderr_data = proc.communicate()
+                    proc.communicate()
+                    ffmpeg_log_file.close()
                     if proc.returncode != 0:
-                        err_msg = stderr_data.decode("utf-8", errors="replace")[-800:]
+                        err_msg = ""
+                        if os.path.exists(ffmpeg_log_path):
+                            try:
+                                with open(ffmpeg_log_path, "r", encoding="utf-8", errors="replace") as f:
+                                    err_msg = f.read()[-800:]
+                            except Exception:
+                                pass
                         raise RuntimeError(f"FFmpeg pipeline failed (exit={proc.returncode}): {err_msg}")
                 else:
                     # Original AVI writer pipeline
@@ -2027,7 +2065,7 @@ def _extract_clip_impl(input_path: str, start: float, end: float, output_path: s
                     pass
         finally:
             # Clean up temp files for this attempt
-            for f in [temp_segment, temp_cropped, temp_segment + "_debug_preview.avi"]:
+            for f in [temp_segment, temp_cropped, temp_segment + "_debug_preview.avi", temp_segment + "_ffmpeg.log"]:
                 if f and os.path.exists(f):
                     try:
                         os.remove(f)

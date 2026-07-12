@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Optional
 from analyzer import LLMResilienceManager, _extract_json_from_response
+from config import settings
 
 logger = logging.getLogger("upload_package")
 
@@ -91,14 +92,14 @@ Generate:
 Return as JSON with fields: titles (array of 3), description, hashtags (array of 15), thumbnail_text, best_time_to_post, target_audience, hook_analysis, keywords (array of 10), category, language, search_intent."""
 
     provider = "google"
-    model_used = "gemini-2.5-flash"
-    
+    model_used = settings.GEMINI_MODEL
+
     if api_key.startswith("sk-proj-") or api_key.startswith("sk-"):
         provider = "openai"
-        model_used = "gpt-4o-mini"
+        model_used = settings.OPENAI_MODEL
     elif api_key.startswith("anthropic:") or api_key.startswith("sk-ant-"):
         provider = "anthropic"
-        model_used = "claude-sonnet-4-6"
+        model_used = settings.EDITOR_MODEL
 
     try:
         llm = LLMResilienceManager(primary_key=api_key)
@@ -106,7 +107,7 @@ Return as JSON with fields: titles (array of 3), description, hashtags (array of
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_json=True,
-            model="claude-sonnet-4-6"
+            model=settings.EDITOR_MODEL
         )
         
         try:
@@ -118,7 +119,7 @@ Return as JSON with fields: titles (array of 3), description, hashtags (array of
                 system_prompt=system_prompt,
                 user_prompt=user_prompt + "\nIMPORTANT: You must return strictly valid JSON. Do not include any markdown styling, conversational text, or trailing commas.",
                 response_json=True,
-                model="claude-sonnet-4-6"
+                model=settings.EDITOR_MODEL
             )
             repaired_json = _extract_json_from_response(response_text)
             package = json.loads(repaired_json)

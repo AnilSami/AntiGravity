@@ -1,34 +1,52 @@
 # Production-Ready Dockerfile for ClipMind
+# Uses $PORT env var so Railway can bind dynamically (Railway injects PORT at runtime)
 FROM python:3.11-slim
 
-# Install system dependencies (FFmpeg is required for video extraction and rendering)
+# Install system dependencies
+# - ffmpeg: required for all video extraction and rendering
+# - libgl1-mesa-glx + libglib2.0-0: OpenCV runtime dependencies
+# - libsm6, libxext6, libxrender-dev: OpenCV display libraries
+# - libgomp1: OpenMP for parallel processing (numpy/cv2)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy backend requirements first to leverage Docker layer caching
+# Copy requirements first — leverages Docker layer caching
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 # Copy application source code
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
+COPY assets/ /app/assets/
 
-# Set working directory to backend so config file and main app are resolved correctly
+# Create all required output subdirectories
+RUN mkdir -p /app/backend/output/clips \
+             /app/backend/output/cache \
+             /app/backend/output/cache/transcripts \
+             /app/backend/output/cache/checkpoints \
+             /app/backend/output/debug \
+             /app/backend/output/shorts \
+             /app/backend/output/temp_subs
+
 WORKDIR /app/backend
 
-# Create volume directory for persistent outputs (cache, database, and clip exports)
-RUN mkdir -p /app/backend/output
+# Mount point for persistent storage (Railway volumes)
+VOLUME ["/app/backend/output"]
 
 EXPOSE 8000
 
-# Set environment variables defaults
 ENV PYTHONUNBUFFERED=1 \
-    PORT=8000 \
     APP_ENV=production
 
-# Startup command running Uvicorn server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use $PORT injected by Railway at runtime (default 8000 for local docker run)
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

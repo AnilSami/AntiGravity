@@ -9,12 +9,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
-# Model tiered strategy constants
-SCOUT_MODEL = "claude-haiku-4-5"
-VIRALITY_MODEL = "claude-haiku-4-5"
-CURATOR_MODEL = "claude-sonnet-4-6"
-EDITOR_MODEL = "claude-sonnet-4-6"
-
 # Test suite compatibility keywords: HOOK, CORE VALUE, NATURAL ENDING, INFORMATIONAL DENSITY
 
 import time
@@ -22,6 +16,18 @@ import random
 import os
 import openai
 from typing import Optional
+from config import settings
+
+# Model tiered strategy — sourced from config.py (env-var overridable)
+# These module-level names are kept for backwards compatibility with test imports.
+SCOUT_MODEL    = settings.SCOUT_MODEL
+VIRALITY_MODEL = settings.VIRALITY_MODEL
+CURATOR_MODEL  = settings.CURATOR_MODEL
+EDITOR_MODEL   = settings.EDITOR_MODEL
+
+# Re-export JSON repair utilities from utils.py for backwards compatibility.
+# Other modules should import directly from utils going forward.
+from utils import repair_json as _repair_json, extract_json_from_response as _extract_json_from_response
 
 # Safely handle Google APIError imports
 try:
@@ -226,7 +232,7 @@ class LLMResilienceManager:
             client = self._get_openai_client(api_key)
             response_format = {"type": "json_object"} if response_json else None
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=settings.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -236,20 +242,14 @@ class LLMResilienceManager:
             return response.choices[0].message.content
         elif self._is_anthropic_key(api_key):
             client = self._get_anthropic_client(api_key)
-            
-            preferred_model = model or "claude-sonnet-4-6"
-            models_to_try = [
-                preferred_model,
-                "claude-sonnet-4-6",
-                "claude-3-5-sonnet-20241022",
-                "claude-3-5-sonnet-latest",
-                "claude-3-5-sonnet-20240620",
-                "claude-3-haiku-20240307"
-            ]
+
+            # Build model list: preferred model first, then primary config, then fallbacks
+            preferred_model = model or settings.ANTHROPIC_MODEL
+            models_to_try = [preferred_model, settings.ANTHROPIC_MODEL] + settings.ANTHROPIC_FALLBACK_MODELS
             # Deduplicate preserving order
-            seen = set()
+            seen: set = set()
             models_to_try = [x for x in models_to_try if not (x in seen or seen.add(x))]
-            
+
             last_err = None
             for model_name in models_to_try:
                 try:
@@ -279,10 +279,10 @@ class LLMResilienceManager:
                 config_args["response_mime_type"] = "application/json"
             if system_prompt:
                 config_args["system_instruction"] = system_prompt
-                
+
             config = genai_types.GenerateContentConfig(**config_args)
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=settings.GEMINI_MODEL,
                 contents=user_prompt,
                 config=config
             )
@@ -392,9 +392,10 @@ class LLMResilienceManager:
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MIN_CLIP_DURATION = 38.0   # seconds
-MAX_CLIP_DURATION = 58.0   # seconds (2 s buffer under the 60 s platform limit)
-DEFAULT_CLIP_DURATION = 35.0  # fallback when AI returns invalid bounds
+# Clip duration bounds — sourced from config.py (env-var overridable)
+MIN_CLIP_DURATION     = settings.MIN_CLIP_DURATION_SECS
+MAX_CLIP_DURATION     = settings.MAX_CLIP_DURATION_SECS
+DEFAULT_CLIP_DURATION = settings.DEFAULT_CLIP_DURATION_SECS
 
 # ── URL parsing ───────────────────────────────────────────────────────────────
 
@@ -519,8 +520,8 @@ def clear_pipeline_checkpoints(video_id: str) -> None:
             try:
                 os.remove(os.path.join(_CHECKPOINT_DIR, fname))
                 removed += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to remove checkpoint file {fname}: {e}")
     if removed:
         logger.info(f"[Checkpoint] Cleared {removed} checkpoints for {video_id}")
 
@@ -659,20 +660,23 @@ def download_audio_ytdlp(video_id: str) -> str:
     }
     
     logger.info(f"Downloading audio track for video ID {video_id}...")
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-        
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as dl_err:
+        raise RuntimeError(f"yt-dlp audio download failed for video {video_id}: {dl_err}") from dl_err
+
     if os.path.exists(cached_audio_path) and os.path.getsize(cached_audio_path) > 0:
         return cached_audio_path
-        
+
     # Check other audio extensions
     for file in os.listdir(cache_dir):
         if file.startswith(video_id + "_audio."):
             file_path = os.path.join(cache_dir, file)
             logger.info(f"Found audio track at: {file_path}")
             return file_path
-            
-    raise FileNotFoundError("Audio track download failed.")
+
+    raise FileNotFoundError(f"Audio track download completed but no output file found for video {video_id}.")
 
 def transcribe_audio_whisper(audio_path: str, model_size: str = "tiny") -> list[LocalTranscriptSnippet]:
     """Transcribes an audio file locally using faster-whisper, falling back to CPU if GPU errors occur."""
@@ -1387,27 +1391,26 @@ def _refine_boundaries(clip: dict, transcript: list) -> dict:
     start_idx = max(0, min(start_idx, total_lines - 1))
     end_idx = max(start_idx, min(end_idx, total_lines - 1))
 
-    # --- SENTENCE START ALIGNMENT (PREVENT MID-SENTENCE CUTOFFS) ---
-    while start_idx > 0:
-        prev_line_text = transcript[start_idx - 1].text.strip()
-        if prev_line_text and prev_line_text[-1] not in SENTENCE_ENDINGS:
-            new_start_idx = start_idx - 1
-            new_duration = (transcript[end_idx].start + transcript[end_idx].duration) - transcript[new_start_idx].start
-            if new_duration <= MAX_CLIP_DURATION:
-                start_idx = new_start_idx
-                logger.info(f"Boundary Refiner: Shifted start backward to {start_idx} to align with sentence start (prev: '{prev_line_text}')")
-            else:
-                break
-        else:
-            break
-
-    # --- START BOUNDARY (HOOK PROTECTION & SHIFT BACKWARD) ---
+    # Check if the start index is a hook (Hook Protection)
     start_text = transcript[start_idx].text.strip()
     is_hook = _is_hook_present(start_text)
 
     if is_hook:
         logger.info(f"Hook Protection: Lock start position at index {start_idx} (text: '{start_text}')")
     else:
+        # --- SENTENCE START ALIGNMENT (PREVENT MID-SENTENCE CUTOFFS) ---
+        while start_idx > 0:
+            prev_line_text = transcript[start_idx - 1].text.strip()
+            if prev_line_text and prev_line_text[-1] not in SENTENCE_ENDINGS:
+                new_start_idx = start_idx - 1
+                new_duration = (transcript[end_idx].start + transcript[end_idx].duration) - transcript[new_start_idx].start
+                if new_duration <= MAX_CLIP_DURATION:
+                    start_idx = new_start_idx
+                    logger.info(f"Boundary Refiner: Shifted start backward to {start_idx} to align with sentence start (prev: '{prev_line_text}')")
+                else:
+                    break
+            else:
+                break
         # Check for conjunction/filler starts and shift backward (never forward)
         shifted = 0
         while shifted < MAX_BACKWARD_SHIFT and start_idx > 0:

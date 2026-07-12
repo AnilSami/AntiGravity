@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from job_manager import jobs, run_pipeline, JobStatus
 from clipper import check_ffmpeg
@@ -32,26 +34,26 @@ cache_lock = asyncio.Lock()
 
 
 async def cleanup_old_jobs():
-    """Background task to delete old jobs and clip folders (older than 1 hour) to save disk space."""
+    """Background task to delete old jobs and clip folders to save disk space."""
     while True:
-        await asyncio.sleep(600)  # Check every 10 minutes
+        await asyncio.sleep(settings.JOB_CLEANUP_INTERVAL_SECS)
         logger.info("Running job cleanup check...")
         now = time.time()
-        
+
         # 1. Purge old jobs from in-memory dictionary
         for job_id, job in list(jobs.items()):
             is_old = False
             if job.created_at > 0:
                 elapsed = now - job.created_at
                 if job.status in ["completed", "failed"]:
-                    if elapsed > 3600:
+                    if elapsed > settings.JOB_TTL_COMPLETED_SECS:
                         is_old = True
                 else:
-                    if elapsed > 10800:
+                    if elapsed > settings.JOB_TTL_RUNNING_SECS:
                         is_old = True
             else:
                 is_old = job.status in ["completed", "failed"]
-            
+
             if is_old:
                 jobs.pop(job_id, None)
                 # Evict from URL cache
@@ -73,12 +75,13 @@ async def cleanup_old_jobs():
                         existing_job = jobs.get(folder_name)
                         if existing_job and existing_job.status not in ["completed", "failed"]:
                             continue
-                        
+
                         mtime = os.path.getmtime(folder_path)
-                        # Clean if orphaned (not in memory map) AND older than 1 hour,
-                        # or if the job is done and modified > 1 hour ago
-                        if (folder_name not in jobs and now - mtime > 3600) or \
-                           (existing_job and existing_job.status in ["completed", "failed"] and now - mtime > 3600):
+                        # Clean if orphaned (not in memory map) AND older than TTL,
+                        # or if the job is done and modified > TTL ago
+                        ttl = settings.JOB_TTL_COMPLETED_SECS
+                        if (folder_name not in jobs and now - mtime > ttl) or \
+                           (existing_job and existing_job.status in ["completed", "failed"] and now - mtime > ttl):
                             try:
                                 shutil.rmtree(folder_path)
                                 logger.info(f"Cleaned up expired/orphaned folder: {folder_path}")
@@ -86,6 +89,16 @@ async def cleanup_old_jobs():
                                 logger.error(f"Failed to delete expired folder {folder_path}: {e}")
             except Exception as e:
                 logger.error(f"Error listing output directory during cleanup: {e}")
+
+
+def _run_auto_sync():
+    """Called by APScheduler to auto-sync YouTube analytics in the background."""
+    try:
+        from youtube_service import sync_youtube_analytics
+        result = sync_youtube_analytics()
+        logger.info(f"[AutoSync] YouTube analytics sync completed: {result.get('synced', 0)} clips synced.")
+    except Exception as e:
+        logger.error(f"[AutoSync] YouTube analytics sync failed: {e}")
 
 
 def validate_pipeline_imports() -> None:
@@ -123,15 +136,31 @@ async def lifespan(app: FastAPI):
     validate_pipeline_imports()
     os.makedirs("output", exist_ok=True)
     cleanup_task = asyncio.create_task(cleanup_old_jobs())
-    logger.info("Server started. Output directory ready. Config validated.")
+
+    # Auto-sync YouTube analytics every N hours (configurable via YOUTUBE_SYNC_INTERVAL_HOURS)
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        _run_auto_sync,
+        trigger=IntervalTrigger(hours=settings.YOUTUBE_SYNC_INTERVAL_HOURS),
+        id="youtube_auto_sync",
+        replace_existing=True,
+        name="YouTube Analytics Auto-Sync"
+    )
+    scheduler.start()
+    logger.info(
+        f"Server started. Auto-sync scheduled every {settings.YOUTUBE_SYNC_INTERVAL_HOURS}h. "
+        f"Output directory ready. Config validated."
+    )
     yield
     # --- Shutdown ---
+    scheduler.shutdown(wait=False)
     cleanup_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
     logger.info("Server shutting down cleanly.")
+
 
 
 # Create the FastAPI app — lifespan must be defined before this line
@@ -166,6 +195,21 @@ class AnalyzeRequest(BaseModel):
     debug_camera_tracking: Optional[bool] = False
     force_refresh: Optional[bool] = False
     bypass_camera_qa: Optional[bool] = False
+
+
+@app.get("/api/status")
+async def health_check():
+    """
+    Health-check endpoint used by Railway (and any load balancer) to verify the
+    server is up and ready to accept requests.
+    Returns 200 OK when the server is healthy.
+    """
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "environment": settings.APP_ENV,
+        "ffmpeg": check_ffmpeg(),
+    }
 
 
 @app.post("/api/analyze")
@@ -481,18 +525,72 @@ class PublishRequest(BaseModel):
 @app.get("/api/youtube/status")
 async def youtube_status():
     try:
-        from youtube_service import get_valid_credentials
+        from youtube_service import get_valid_credentials, is_mock_mode, _save_tokens_to_json
         from analytics_repository import db as analytics_db
+        from googleapiclient.discovery import build
+        
         creds = get_valid_credentials()
         connected = creds is not None
         channel_name = None
         channel_id = None
+        subscriber_count = 0
+        video_count = 0
+        
         if connected:
             creds_info = analytics_db.get_credentials("youtube")
             if creds_info:
                 channel_name = creds_info.get("channel_name")
                 channel_id = creds_info.get("channel_id")
-        return {"connected": connected, "channel_name": channel_name, "channel_id": channel_id}
+                
+            if is_mock_mode() or (hasattr(creds, "token") and creds.token == "mock_valid"):
+                subscriber_count = 12500
+                video_count = 42
+                if not channel_name:
+                    channel_name = "Mock Shorts Creator"
+                    channel_id = "mock_channel_id_123"
+            else:
+                try:
+                    # Fetch live channel details from YouTube API
+                    youtube = build("youtube", "v3", credentials=creds)
+                    res = youtube.channels().list(
+                        part="snippet,statistics",
+                        mine=True
+                    ).execute()
+                    if "items" in res and len(res["items"]) > 0:
+                        item = res["items"][0]
+                        channel_name = item["snippet"]["title"]
+                        channel_id = item["id"]
+                        stats = item.get("statistics", {})
+                        subscriber_count = int(stats.get("subscriberCount", 0))
+                        video_count = int(stats.get("videoCount", 0))
+                        
+                        # Update stored values to keep them in sync
+                        if creds_info:
+                            analytics_db.save_credentials(
+                                platform="youtube",
+                                access_token=creds_info["access_token"],
+                                refresh_token=creds_info["refresh_token"],
+                                token_expiry=creds_info["token_expiry"],
+                                channel_name=channel_name,
+                                channel_id=channel_id
+                            )
+                            _save_tokens_to_json(
+                                access_token=creds.token,
+                                refresh_token=creds.refresh_token or "",
+                                token_expiry=creds.expiry.timestamp() if creds.expiry else time.time() + 3600.0,
+                                channel_name=channel_name,
+                                channel_id=channel_id
+                            )
+                except Exception as api_err:
+                    logger.warning(f"Failed to fetch live YouTube stats: {api_err}")
+                    
+        return {
+            "connected": connected,
+            "channel_name": channel_name,
+            "channel_id": channel_id,
+            "subscriber_count": subscriber_count,
+            "video_count": video_count
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -682,6 +780,7 @@ async def get_youtube_dashboard():
             "connected": connected,
             "channel_name": channel_name,
             "published_clips": published_clips,
+            "last_sync_time": analytics_db.get_last_sync_time(),
             "reports": {
                 "model_improvement": improvement_report,
                 "creator_disagreement": disagreement_report
