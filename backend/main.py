@@ -465,7 +465,22 @@ async def submit_action(request: ActionSubmitRequest):
             rejected=request.rejected,
             published=request.published
         )
-        return {"status": "success", "message": "Creator actions updated successfully."}
+        
+        # Trigger feedback learning engine weight adjustments & profile rebuild
+        if request.selected or request.rejected:
+            try:
+                from learning_engine import adjust_weights_on_creator_action
+                from creator_profile import rebuild_creator_profile
+                adjust_weights_on_creator_action(
+                    clip_id=request.clip_id,
+                    selected=bool(request.selected),
+                    rejected=bool(request.rejected)
+                )
+                rebuild_creator_profile()
+            except Exception as learn_err:
+                logger.warning(f"Failed to run feedback learning engine update: {learn_err}")
+                
+        return {"status": "success", "message": "Creator actions and AI learning updated successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

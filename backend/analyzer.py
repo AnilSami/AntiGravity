@@ -1343,7 +1343,47 @@ def calculate_virality_score(clip_text: str, title: str, llm_scores: dict, weigh
         scores[k] = max(1.0, min(10.0, float(scores[k])))
         
     if weights is None:
-        weights = SCORING_SETTINGS["weights"]
+        weights = SCORING_SETTINGS["weights"].copy()
+    else:
+        weights = weights.copy()
+
+    # Apply personalized learning weight multipliers from creator profile
+    try:
+        from creator_profile import get_creator_profile, DEFAULT_VIRALITY_WEIGHTS
+        profile = get_creator_profile()
+        learned = profile.get("virality_weights", DEFAULT_VIRALITY_WEIGHTS)
+        
+        # Calculate multipliers relative to default weights
+        m_hook = learned.get("hook_weight", 0.35) / 0.35
+        m_ret = learned.get("retention_weight", 0.25) / 0.25
+        m_dens = learned.get("density_weight", 0.20) / 0.20
+        m_flow = learned.get("flow_weight", 0.20) / 0.20
+        
+        # Apply multipliers to corresponding categories
+        hook_keys = {"hook_strength", "first_3_second_hook", "curiosity_gap"}
+        ret_keys = {"storytelling", "emotional_intensity", "emotional_tension"}
+        dens_keys = {"actionability", "shareability", "contrarian_viewpoint"}
+        flow_keys = {"surprise", "controversy"}
+        
+        for k in weights:
+            if k in hook_keys:
+                weights[k] *= m_hook
+            elif k in ret_keys:
+                weights[k] *= m_ret
+            elif k in dens_keys:
+                weights[k] *= m_dens
+            elif k in flow_keys:
+                weights[k] *= m_flow
+                
+        # Re-normalize to ensure the weights still sum exactly to 1.0 (or to their original sum)
+        orig_sum = sum(SCORING_SETTINGS["weights"].values())
+        curr_sum = sum(weights.values())
+        if curr_sum > 0:
+            for k in weights:
+                weights[k] = (weights[k] / curr_sum) * orig_sum
+    except Exception as e:
+        logger.debug(f"Could not apply learned virality weights, using baseline: {e}")
+
     final_score = sum(scores[k] * weights[k] for k in scores)
     
     return round(final_score, 2), scores
