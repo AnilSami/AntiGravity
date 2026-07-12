@@ -7,15 +7,25 @@ FROM python:3.11-slim
 # - libgl1-mesa-glx + libglib2.0-0: OpenCV runtime dependencies
 # - libsm6, libxext6, libxrender-dev: OpenCV display libraries
 # - libgomp1: OpenMP for parallel processing (numpy/cv2)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update || (sleep 5 && apt-get update)
+RUN apt-get install -y --no-install-recommends --fix-missing \
     ffmpeg \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
     curl \
+    || (sleep 5 && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    curl) \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
