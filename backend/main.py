@@ -623,7 +623,8 @@ async def youtube_auth(request: Request):
         from youtube_service import get_auth_url, store_oauth_state
         auth_url, state = get_auth_url(redirect_uri)
         store_oauth_state(state)
-        return RedirectResponse(auth_url)
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"auth_url": auth_url, "redirect_uri_used": redirect_uri})
     except HTTPException:
         raise
     except Exception as e:

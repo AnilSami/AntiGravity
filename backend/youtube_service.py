@@ -191,6 +191,7 @@ def get_auth_url(redirect_uri: str) -> Tuple[str, str]:
     Generates OAuth authorization URL and CSRF state parameter.
     If in mock mode, returns a mock local redirect URL.
     """
+    logger.info(f"OAuth redirect_uri: {redirect_uri}")
     if is_mock_mode():
         state = "mock_state_" + "".join(random.choices(string.ascii_letters + string.digits, k=10))
         # Redirect back to the callback endpoint directly with mock code
