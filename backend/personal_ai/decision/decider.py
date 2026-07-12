@@ -59,19 +59,37 @@ def run_decision_agent(
             return {
                 "decision": "generate",
                 "explanation": f"The clip has a very strong estimated virality of {est_vir} and aligns with niche preferences.",
-                "modification_suggestions": ""
+                "modification_suggestions": "",
+                "why_chosen": "High viral score indicates great topic resonance with target developers.",
+                "creator_memories_matched": ["Lesson 1: Focus on tech/coding guides"],
+                "successful_patterns_matched": ["Autonomous AI agent demo is viral"],
+                "failed_patterns_avoided": [],
+                "confidence": 0.90,
+                "supporting_evidence": clip_plan.get("hook", "")
             }
         elif est_vir >= 0.70:
             return {
                 "decision": "modify",
                 "explanation": "Decent potential, but recommend sharpening the title to match high-CTR formats.",
-                "modification_suggestions": "Make title more urgent."
+                "modification_suggestions": "Make title more urgent.",
+                "why_chosen": "Good hooks, but titles require direct action verbs for better click velocity.",
+                "creator_memories_matched": ["Lesson 2: Keep titles action-oriented"],
+                "successful_patterns_matched": [],
+                "failed_patterns_avoided": ["Avoid dry database indexing guides"],
+                "confidence": 0.75,
+                "supporting_evidence": clip_plan.get("hook", "")
             }
         else:
             return {
                 "decision": "reject",
                 "explanation": f"Clip does not meet the minimum viral threshold ({est_vir}).",
-                "modification_suggestions": ""
+                "modification_suggestions": "",
+                "why_chosen": "The topic is too narrow or technical for broad developer engagement.",
+                "creator_memories_matched": [],
+                "successful_patterns_matched": [],
+                "failed_patterns_avoided": ["Avoid dry database indexing guides"],
+                "confidence": 0.40,
+                "supporting_evidence": clip_plan.get("hook", "")
             }
 
     try:
@@ -90,5 +108,11 @@ def run_decision_agent(
         return {
             "decision": "generate",
             "explanation": "Fallback approval to prevent blocking generation.",
-            "modification_suggestions": ""
+            "modification_suggestions": "",
+            "why_chosen": "Fallback selection during LLM connection failure.",
+            "creator_memories_matched": [],
+            "successful_patterns_matched": [],
+            "failed_patterns_avoided": [],
+            "confidence": 0.50,
+            "supporting_evidence": "Fallback default"
         }

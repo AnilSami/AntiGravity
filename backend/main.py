@@ -867,6 +867,101 @@ async def rebuild_personal_profile(version: Optional[str] = "default"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/personal/dashboard")
+async def get_personal_dashboard_data():
+    """Exposes structured JSON data for the Personal AI strategist dashboard."""
+    try:
+        from analytics_repository import db as analytics_db
+        conn = analytics_db._get_connection()
+        predictions = []
+        reflections = []
+        lessons = []
+        weights = {}
+        
+        try:
+            with conn:
+                cursor = conn.cursor()
+                
+                # 1. Predictions & Reflections History
+                cursor.execute("""
+                    SELECT p.clip_id, p.predicted_score, p.detailed_predictions, p.target_audience, p.reasoning, p.created_at,
+                           r.views_diff, r.retention_diff, r.evaluation, r.weight_adjustments
+                    FROM creator_predictions p
+                    LEFT JOIN creator_reflections r ON p.clip_id = r.clip_id
+                    ORDER BY p.created_at DESC
+                """)
+                for row in cursor.fetchall():
+                    try:
+                        detailed = json.loads(row[2])
+                    except Exception:
+                        detailed = {}
+                        
+                    try:
+                        weight_adj = json.loads(row[9]) if row[9] else {}
+                    except Exception:
+                        weight_adj = {}
+
+                    predictions.append({
+                        "clip_id": row[0],
+                        "predicted_score": row[1],
+                        "detailed_predictions": detailed,
+                        "target_audience": row[3],
+                        "reasoning": row[4],
+                        "created_at": row[5],
+                        "actual_performance": {
+                            "views_diff": row[6] if row[6] is not None else 0,
+                            "retention_diff": row[7] if row[7] is not None else 0.0,
+                            "evaluation": row[8] if row[8] is not None else "pending",
+                            "weight_adjustments": weight_adj
+                        }
+                    })
+
+                # 2. Lessons Learned
+                cursor.execute("SELECT lesson_id, type, concept, description, created_at FROM creator_lessons ORDER BY created_at DESC")
+                for row in cursor.fetchall():
+                    lessons.append({
+                        "lesson_id": row[0],
+                        "type": row[1],
+                        "concept": row[2],
+                        "description": row[3],
+                        "created_at": row[4]
+                    })
+
+                # 3. Current Virality Weights
+                cursor.execute("SELECT virality_weights FROM creator_profile_state ORDER BY last_updated DESC LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    weights = json.loads(row[0])
+                else:
+                    from creator_profile import DEFAULT_VIRALITY_WEIGHTS
+                    weights = DEFAULT_VIRALITY_WEIGHTS
+        finally:
+            conn.close()
+
+        # Compute error and confidence trends over time
+        confidence_trend = []
+        for p in reversed(predictions):
+            actual = p["actual_performance"]
+            if actual["evaluation"] != "pending":
+                error_magnitude = abs(actual["views_diff"]) / 1000.0 + abs(actual["retention_diff"])
+                confidence_trend.append({
+                    "clip_id": p["clip_id"],
+                    "created_at": p["created_at"],
+                    "error_score": round(error_magnitude, 3),
+                    "evaluation": actual["evaluation"]
+                })
+
+        return {
+            "status": "success",
+            "weights": weights,
+            "predictions_history": predictions,
+            "lessons_learned": lessons,
+            "confidence_trend": confidence_trend
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve frontend static files — must be mounted AFTER all /api/* routes
 # so API routes take precedence over the catch-all static handler.
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))

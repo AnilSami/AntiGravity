@@ -98,5 +98,16 @@ class TestApiEndpoints(unittest.TestCase):
             args, kwargs = mock_fileresponse.call_args
             self.assertIn("clips", args[0])
 
+    def test_get_personal_dashboard_data(self):
+        """Verify that GET /api/personal/dashboard returns structured JSON status 200."""
+        response = self.client.get("/api/personal/dashboard")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("weights", data)
+        self.assertIn("predictions_history", data)
+        self.assertIn("lessons_learned", data)
+        self.assertIn("confidence_trend", data)
+
 if __name__ == "__main__":
     unittest.main()

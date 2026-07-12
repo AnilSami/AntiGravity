@@ -99,51 +99,6 @@ def _repair_json(text: str) -> str:
             
     return repaired_text
 
-
-def _extract_json_from_response(text: str) -> str:
-    text = text.strip()
-    if not text:
-        return ""
-    try:
-        json.loads(text)
-        return text
-    except json.JSONDecodeError:
-        pass
-
-    # Look for markdown code fences: ```json ... ``` or ``` ... ```
-    match = re.search(r'```(?:json)?\s*([\{\[].*?[\}\]])\s*```', text, re.DOTALL)
-    if match:
-        extracted = match.group(1).strip()
-    else:
-        # As a fallback, find the first occurrence of '{' or '['
-        first_brace = -1
-        first_char = None
-        for idx, char in enumerate(text):
-            if char in ('{', '['):
-                first_brace = idx
-                first_char = char
-                break
-                
-        if first_brace != -1:
-            target_char = '}' if first_char == '{' else ']'
-            last_brace = text.rfind(target_char)
-            if last_brace != -1 and last_brace > first_brace:
-                extracted = text[first_brace:last_brace+1].strip()
-            else:
-                extracted = text[first_brace:].strip()
-        else:
-            extracted = text
-
-    # Repair the extracted JSON string
-    repaired = _repair_json(extracted)
-    try:
-        json.loads(repaired)
-        return repaired
-    except json.JSONDecodeError:
-        # If repair still doesn't parse, return repaired text so standard parser can throw
-        return repaired
-
-
 class LLMResilienceManager:
     """
     A unified, thread-safe service that manages:
@@ -2182,7 +2137,13 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
                             modified_plan.get("estimated_virality", 0.5) * 10.0,
                             json.dumps({
                                 "retention": modified_plan.get("estimated_retention", 0.0),
-                                "virality": modified_plan.get("estimated_virality", 0.0)
+                                "virality": modified_plan.get("estimated_virality", 0.0),
+                                "why_chosen": decision_res.get("why_chosen", ""),
+                                "creator_memories_matched": decision_res.get("creator_memories_matched", []),
+                                "successful_patterns_matched": decision_res.get("successful_patterns_matched", []),
+                                "failed_patterns_avoided": decision_res.get("failed_patterns_avoided", []),
+                                "confidence": decision_res.get("confidence", 0.5),
+                                "supporting_evidence": decision_res.get("supporting_evidence", "")
                             }),
                             modified_plan.get("target_audience", "general"),
                             explanation,

@@ -114,7 +114,13 @@ Decide whether this clip should be generated, rejected, or modified.
 Return ONLY a valid JSON object matching this structure:
 {{
   "decision": "generate", // "generate" or "reject" or "modify"
-  "explanation": "Why this decision was made.",
-  "modification_suggestions": "Any recommended hook or title adjustments if decision is modify."
+  "explanation": "Brief overview of the decision.",
+  "modification_suggestions": "Any recommended hook or title adjustments if decision is modify.",
+  "why_chosen": "Detailed reasoning on why this clip fits the creator's channel strategy.",
+  "creator_memories_matched": ["list", "of", "memories", "that", "helped", "decide"],
+  "successful_patterns_matched": ["successful", "patterns", "referenced"],
+  "failed_patterns_avoided": ["anti-patterns", "avoided"],
+  "confidence": 0.85, // confidence float score between 0.0 and 1.0
+  "supporting_evidence": "Textual evidence from the clip transcript that justifies the decision."
 }}
 """
