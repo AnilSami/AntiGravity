@@ -434,7 +434,20 @@ async def submit_analytics(request: AnalyticsSubmitRequest):
             retention=request.retention,
             upload_date=request.upload_date
         )
-        return {"status": "success", "message": "Analytics metrics updated successfully."}
+        
+        # Trigger Reflection Agent and Creator Brain update
+        try:
+            from personal_ai.reflection.reflector import run_reflection_agent
+            run_reflection_agent(
+                clip_id=request.clip_id,
+                actual_views=request.views or 0,
+                actual_retention=request.retention or 0.0,
+                actual_likes=request.likes or 0
+            )
+        except Exception as ref_err:
+            logger.warning(f"Failed to run Reflection Agent: {ref_err}")
+
+        return {"status": "success", "message": "Analytics metrics and AI reflections updated successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

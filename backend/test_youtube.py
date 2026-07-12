@@ -6,8 +6,8 @@ import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
-# Ensure the test server origin is allowed before app/config import
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://testserver")
+os.environ["YOUTUBE_MOCK_MODE"] = "true"
 
 from analytics_repository import db as analytics_db
 from youtube_service import (
@@ -219,9 +219,10 @@ def test_oauth_csrf_valid_state():
     
     # Hit /auth to generate and store a state token
     response = client.get("/api/youtube/auth", follow_redirects=False)
-    assert response.status_code == 307  # RedirectResponse
+    assert response.status_code == 200
     
-    redirect_url = response.headers["location"]
+    data = response.json()
+    redirect_url = data["auth_url"]
     # Extract state and code from the mock redirect URL
     from urllib.parse import urlparse, parse_qs
     parsed = urlparse(redirect_url)
@@ -277,10 +278,11 @@ def test_oauth_csrf_replay_attack():
     
     # Generate a state via /auth
     response = client.get("/api/youtube/auth", follow_redirects=False)
-    assert response.status_code == 307
+    assert response.status_code == 200
     
+    data = response.json()
     from urllib.parse import urlparse, parse_qs
-    parsed = urlparse(response.headers["location"])
+    parsed = urlparse(data["auth_url"])
     params = parse_qs(parsed.query)
     state = params["state"][0]
     code = params["code"][0]

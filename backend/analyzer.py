@@ -2072,7 +2072,7 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
         raise ValueError("API key is required. Please set GEMINI_API_KEY/OPENAI_API_KEY in .env or provide it in the input.")
 
     # Handled separately to prevent empty mock calls (keeps tests compatible)
-    if api_key and api_key.startswith("mock"):
+    if api_key and api_key.startswith("mock") and os.getenv("PERSONAL_AI_ENABLED") != "true":
         mock_count = num_clips if num_clips is not None else 5
         logger.info(f"Mock API key detected — returning {mock_count} pre-built clips (no real API call).")
         scaled_clips = []
@@ -2133,293 +2133,378 @@ def analyze_with_gemini(transcript: str, raw_transcript: list, api_key: str, num
     # Initialize the LLM Resilience Manager
     llm = LLMResilienceManager(primary_key=api_key)
 
-    # 1. --- AGENT 1: THE CLIP SCOUT (Chunked) ---
-    scout_checkpoint = load_pipeline_checkpoint(checkpoint_key, "scout") if checkpoint_key else None
-    if scout_checkpoint is not None:
-        logger.info(f"[Checkpoint] Reusing {len(scout_checkpoint)} scout candidates from disk. Skipping Clip Scout LLM calls.")
-        candidates = scout_checkpoint
-        scout_count = len(candidates)
-    else:
-        chunk_size = 300
-        chunks = []
-        for i in range(0, len(raw_transcript), chunk_size):
-            chunk_lines = []
-            for idx in range(i, min(i + chunk_size, len(raw_transcript))):
-                entry = raw_transcript[idx]
-                if isinstance(entry, dict):
-                    text = entry.get("text", "")
-                    start = float(entry.get("start", 0.0))
-                    duration = float(entry.get("duration", 0.0))
-                else:
-                    text = getattr(entry, "text", "")
-                    start = float(getattr(entry, "start", 0.0))
-                    duration = float(getattr(entry, "duration", 0.0))
-                text = text.replace('\n', ' ').strip()
-                end = start + duration
-                chunk_lines.append(f"[{idx}] [{start:.2f} - {end:.2f}] {text}")
-            chunk_transcript_text = "\n".join(chunk_lines)
-            chunks.append((i, chunk_transcript_text))
-
-        logger.info(f"Running Agent 1: The Clip Scout in parallel across {len(chunks)} chunks...")
-        all_candidates = []
-        chunk_errors = []
-        
-        def _scout_chunk(chunk_idx, chunk_text):
-            scout_prompt = SCOUT_AGENT_PROMPT_TEMPLATE.format(transcript=chunk_text)
-            try:
-                scout_response_text = llm.call(
-                    system_prompt="You are a short-form video researcher that outputs only valid JSON.",
-                    user_prompt=scout_prompt,
-                    response_json=True,
-                    model=SCOUT_MODEL
-                )
-                scout_data = json.loads(_extract_json_from_response(scout_response_text))
-                if "candidates" in scout_data:
-                    return scout_data["candidates"], None
-                else:
-                    return _extract_clips_list(scout_data), None
-            except Exception as e:
-                return [], e
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {
-                executor.submit(_scout_chunk, i, chunk_text): i
-                for i, chunk_text in chunks
-            }
-            for future in as_completed(futures):
-                chunk_idx = futures[future]
-                try:
-                    res_candidates, err = future.result()
-                    if err:
-                        chunk_errors.append(f"Chunk starting at index {chunk_idx}: {err}")
-                    else:
-                        all_candidates.extend(res_candidates)
-                except Exception as e:
-                    chunk_errors.append(f"Future error for chunk at index {chunk_idx}: {e}")
-
-        # If all chunks failed, raise a RuntimeError
-        if len(chunk_errors) == len(chunks) and chunks:
-            error_msg = f"All {len(chunks)} Scout chunks failed. Errors: {'; '.join(chunk_errors)}"
-            logger.error(error_msg)
-            raise RuntimeError(f"Clip Scout failed: {error_msg}")
-
-        candidates = all_candidates
-        scout_count = len(candidates)
-        logger.info(f"Clip Scout found {scout_count} total candidates across all chunks.")
-
-        # Save scout checkpoint immediately after expensive LLM calls
-        if checkpoint_key and candidates:
-            save_pipeline_checkpoint(checkpoint_key, "scout", candidates)
-
-    if not candidates:
-        logger.info("Clip Scout did not find any candidates in the transcript. Returning empty list.")
-        return []
-
-    # Limit candidates to prevent huge API credit waste (production safety guardrail)
-    max_cands_to_score = max(5, (num_clips or 5) * 2)
-    if len(candidates) > max_cands_to_score:
-        logger.info(f"Sampling {max_cands_to_score} candidates out of {len(candidates)} to save API credits.")
-        n_candidates = len(candidates)
-        step = (n_candidates - 1) / (max_cands_to_score - 1)
-        sampled = []
-        for i in range(max_cands_to_score):
-            idx = int(round(i * step))
-            idx = max(0, min(idx, n_candidates - 1))
-            cand_to_add = candidates[idx]
-            if cand_to_add not in sampled:
-                sampled.append(cand_to_add)
-        if not sampled:
-            candidates = candidates[:max_cands_to_score]
-        else:
-            candidates = sampled
-
-    # Run dedicated Scoring Agent on all candidates (needed by Curator for ranking/overlaps)
-    # Check for scored checkpoint first to avoid redundant LLM calls
-    scored_checkpoint = load_pipeline_checkpoint(checkpoint_key, "scored") if checkpoint_key else None
-    if scored_checkpoint is not None:
-        logger.info(f"[Checkpoint] Reusing {len(scored_checkpoint)} scored candidates from disk. Skipping Scoring Agent LLM calls.")
-        candidates = scored_checkpoint
-    else:
-        logger.info(f"Running dedicated Scoring Agent on {len(candidates)} candidates...")
-        scored_candidates = []
+    # --- AUTONOMOUS DECISION LAYER ---
+    approved_clips = []
     
-        def _score_candidate(cand):
-            try:
-                c_start = max(0, min(int(float(cand["start_index"])), len(raw_transcript) - 1))
-                c_end = max(c_start, min(int(float(cand["end_index"])), len(raw_transcript) - 1))
-                clip_lines = [raw_transcript[idx].text for idx in range(c_start, c_end + 1)]
-                clip_text = " ".join(clip_lines)
-                
-                if api_key.startswith("mock"):
-                    raw_scores = score_clip_mock(cand["title"])
-                else:
-                    prompt_scoring = SCORING_AGENT_PROMPT_TEMPLATE.format(
-                        title=cand["title"],
-                        clip_text=clip_text
-                    )
-                    scores_response = llm.call(
-                        system_prompt="You are a short-form content scoring assistant that outputs only valid JSON.",
-                        user_prompt=prompt_scoring,
-                        response_json=True,
-                        model=VIRALITY_MODEL
-                    )
-                    raw_scores = json.loads(_extract_json_from_response(scores_response))
-                    
-                variant_id = random.choice(["A", "B"])
-                exp_config = ACTIVE_EXPERIMENT["variants"][variant_id]
-                weights = exp_config["weights"]
-                
-                final_score, adjusted_scores = calculate_virality_score(clip_text, cand["title"], raw_scores, weights)
-                
-                new_cand = cand.copy()
-                new_cand["virality_score"] = final_score
-                new_cand["detailed_scores"] = adjusted_scores
-                new_cand["raw_llm_scores"] = {k: raw_scores[k] for k in raw_scores if k != "reasoning"}
-                new_cand["score_reasoning"] = raw_scores.get("reasoning", {})
-                
-                new_cand["experiment_id"] = ACTIVE_EXPERIMENT["experiment_id"]
-                new_cand["variant_id"] = variant_id
-                new_cand["scoring_version"] = exp_config["scoring_version"]
-                new_cand["prompt_version"] = exp_config["prompt_version"]
-                new_cand["weight_version"] = exp_config["weight_version"]
-                
-                return new_cand
-            except Exception as ex:
-                logger.error(f"Scoring Agent failed for candidate '{cand.get('title', 'Unknown')}': {ex}")
-                new_cand = cand.copy()
-                fallback_scores = score_clip_mock(cand.get("title", "Fallback"))
-                
-                variant_id = random.choice(["A", "B"])
-                exp_config = ACTIVE_EXPERIMENT["variants"][variant_id]
-                weights = exp_config["weights"]
-                
-                final_score, adjusted_scores = calculate_virality_score("", cand.get("title", "Fallback"), fallback_scores, weights)
-                new_cand["virality_score"] = final_score
-                new_cand["detailed_scores"] = adjusted_scores
-                new_cand["raw_llm_scores"] = fallback_scores
-                new_cand["score_reasoning"] = {}
-                
-                new_cand["experiment_id"] = ACTIVE_EXPERIMENT["experiment_id"]
-                new_cand["variant_id"] = variant_id
-                new_cand["scoring_version"] = exp_config["scoring_version"]
-                new_cand["prompt_version"] = exp_config["prompt_version"]
-                new_cand["weight_version"] = exp_config["weight_version"]
-                
-                return new_cand
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(_score_candidate, cand) for cand in candidates]
-            for future in as_completed(futures):
-                res = future.result()
-                scored_candidates.append(res)
-
-        # Save scored checkpoint immediately after all scoring completes
-        if checkpoint_key and scored_candidates:
-            save_pipeline_checkpoint(checkpoint_key, "scored", scored_candidates)
-
-        candidates = scored_candidates
-
-    # 2. --- AGENT 2: THE CONTENT CURATOR (DEDUPLICATOR) ---
-    # Check for curated checkpoint first to avoid redundant LLM call
-    curated_checkpoint = load_pipeline_checkpoint(checkpoint_key, "curated") if checkpoint_key else None
-    if curated_checkpoint is not None:
-        logger.info(f"[Checkpoint] Reusing {len(curated_checkpoint)} curated candidates from disk. Skipping Curator LLM call.")
-        selected_candidates = curated_checkpoint
-    else:
-        selected_candidates = []
+    # Avoid running autonomous agents if Personal AI is not explicitly enabled via environment variable
+    if os.getenv("PERSONAL_AI_ENABLED") == "true":
         try:
-            logger.info("Running Agent 2: The Content Curator...")
-            candidates_json = json.dumps(candidates, indent=2)
-            # Fetch Personalized Creator AI profile context & few-shot examples
-            profile_context = ""
-            few_shot_examples = ""
-            try:
-                from creator_profile import get_creator_profile
-                from retrieval_service import get_few_shot_prompt_context
-                
-                profile = get_creator_profile()
-                style_prefs = profile.get("style_preferences", {})
-                
-                profile_context = (
-                    f"\n--- PERSONALIZED CREATOR PREFERENCES (ALIGN TO THESE STYLE VALUES) ---\n"
-                    f"  - Target Clip Duration: {style_prefs.get('clip_duration_secs', 42.0)} seconds\n"
-                    f"  - Preferred Subtitle Style: {style_prefs.get('subtitle_style', 'kinetic')}\n"
-                    f"  - Preferred Emotion/Tone: {style_prefs.get('primary_emotion', 'engaging')}\n"
-                    f"  - Average Speech Reading Speed: {style_prefs.get('reading_speed_wpm', 180.0)} words/minute\n"
-                    f"  - Expected Words Per Chunk: {style_prefs.get('words_per_chunk', 2.5)} words\n"
-                    f"  - Preferred Energy Level: {style_prefs.get('energy_level', 7)}/10\n"
-                )
-                # Use first few candidate titles as a search query for similar successful past clips
-                query_text = " ".join([cand.get("title", "") for cand in candidates[:3]])
-                few_shot_examples = get_few_shot_prompt_context(query_text, limit=2)
-            except Exception as e:
-                logger.debug(f"Could not load personalized context for Curator Agent: {e}")
+            logger.info("[Creator AI] Running Autonomous Decision Layer...")
+            from personal_ai.strategy.strategist import run_strategy_agent
+            from personal_ai.planning.planner import run_planner_agent
+            from personal_ai.decision.decider import run_decision_agent
+            from analytics_repository import db as analytics_db
+            import time
 
-            curator_prompt = CURATOR_AGENT_PROMPT_TEMPLATE.format(
-                candidates_json=candidates_json,
-                transcript=transcript,
-                creator_profile_context=profile_context,
-                few_shot_examples=few_shot_examples
-            )
-            if num_clips is not None:
-                curator_prompt += f"\n\nIMPORTANT: The user explicitly requested to select at most {num_clips} clip(s). You MUST select a maximum of {num_clips} of the very best candidate(s)."
+            # 1. Strategy Agent
+            strategy = run_strategy_agent(transcript, api_key=llm.primary_key)
             
-            curator_response_text = llm.call(
-                system_prompt="You are a content curator assistant that outputs only valid JSON.",
-                user_prompt=curator_prompt,
-                response_json=True,
-                model=CURATOR_MODEL
-            )
-            curator_data = json.loads(_extract_json_from_response(curator_response_text))
-            if "selected_clips" in curator_data:
-                selected_candidates = curator_data["selected_clips"]
-            else:
-                selected_candidates = _extract_clips_list(curator_data)
+            # 2. Planner Agent
+            plans = run_planner_agent(transcript, strategy, api_key=llm.primary_key)
             
-            mapped_selected = []
-            for sel in selected_candidates:
-                match = None
-                try:
-                    sel_start = int(float(sel.get("start_index", 0)))
-                    sel_end = int(float(sel.get("end_index", 0)))
-                except (ValueError, TypeError):
-                    sel_start, sel_end = 0, 0
+            # 3. Decision Agent
+            for plan in plans:
+                decision_res = run_decision_agent(plan, api_key=llm.primary_key)
+                decision = decision_res.get("decision", "generate")
+                explanation = decision_res.get("explanation", "")
+                
+                logger.info(f"[Creator AI] Plan '{plan.get('recommended_title')}': {decision.upper()} - {explanation}")
+                if decision == "reject":
+                    continue
                     
-                for cand in candidates:
-                    try:
-                        cand_start = int(float(cand.get("start_index", 0)))
-                        cand_end = int(float(cand.get("end_index", 0)))
-                    except (ValueError, TypeError):
-                        continue
-                    if sel_start == cand_start and sel_end == cand_end:
-                        match = cand
-                        break
-                if match:
-                    new_sel = match.copy()
-                    new_sel.update({k: v for k, v in sel.items() if k not in ("virality_score", "detailed_scores", "raw_llm_scores", "score_reasoning")})
-                    mapped_selected.append(new_sel)
-                else:
-                    mapped_selected.append(sel)
-            selected_candidates = mapped_selected
+                modified_plan = plan.copy()
+                if decision == "modify":
+                    suggestions = decision_res.get("modification_suggestions", "")
+                    if suggestions:
+                        modified_plan["recommended_title"] = f"{plan.get('recommended_title')} ({suggestions})"
+                
+                # Log prediction to database before generating the clip
+                clip_id = f"clip_{int(time.time() * 1000)}"
+                try:
+                    conn = analytics_db._get_connection()
+                    with conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO creator_predictions (clip_id, predicted_score, detailed_predictions, target_audience, reasoning, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            clip_id,
+                            modified_plan.get("estimated_virality", 0.5) * 10.0,
+                            json.dumps({
+                                "retention": modified_plan.get("estimated_retention", 0.0),
+                                "virality": modified_plan.get("estimated_virality", 0.0)
+                            }),
+                            modified_plan.get("target_audience", "general"),
+                            explanation,
+                            time.time()
+                        ))
+                except Exception as pred_err:
+                    logger.warning(f"Failed to log prediction to db: {pred_err}")
+                finally:
+                    conn.close()
+
+                approved_clips.append({
+                    "clip_id": clip_id,
+                    "title": modified_plan.get("recommended_title", "Untitled Clip"),
+                    "start_index": modified_plan.get("start_index", 0),
+                    "end_index": modified_plan.get("end_index", 10),
+                    "reason": modified_plan.get("hook", "Proposed by Planner Agent"),
+                    "shorts_title": modified_plan.get("recommended_title", "Viral Clip"),
+                    "shorts_description": f"Target: {modified_plan.get('target_audience')}. Hook: {modified_plan.get('hook')}",
+                    "shorts_tags": ["shorts"],
+                    "subtitle_style": modified_plan.get("subtitle_style", "kinetic"),
+                    "music_recommendation": modified_plan.get("music_recommendation", "ambient"),
+                    "virality_score": round(modified_plan.get("estimated_virality", 0.5) * 10.0, 1)
+                })
+        except Exception as auto_err:
+            logger.warning(f"Autonomous Decision Layer failed: {auto_err}. Falling back to standard pipeline.")
+            approved_clips = []
+
+    if approved_clips:
+        selected_candidates = approved_clips
+        scout_count = len(approved_clips)
+        curator_count = len(approved_clips)
+    else:
+        # Fall back to standard scout & curator
+        logger.info("[Creator AI] Running fallback scout and curator stages...")
+
+        # 1. --- AGENT 1: THE CLIP SCOUT (Chunked) ---
+        scout_checkpoint = load_pipeline_checkpoint(checkpoint_key, "scout") if checkpoint_key else None
+        if scout_checkpoint is not None:
+            logger.info(f"[Checkpoint] Reusing {len(scout_checkpoint)} scout candidates from disk. Skipping Clip Scout LLM calls.")
+            candidates = scout_checkpoint
+            scout_count = len(candidates)
+        else:
+            chunk_size = 300
+            chunks = []
+            for i in range(0, len(raw_transcript), chunk_size):
+                chunk_lines = []
+                for idx in range(i, min(i + chunk_size, len(raw_transcript))):
+                    entry = raw_transcript[idx]
+                    if isinstance(entry, dict):
+                        text = entry.get("text", "")
+                        start = float(entry.get("start", 0.0))
+                        duration = float(entry.get("duration", 0.0))
+                    else:
+                        text = getattr(entry, "text", "")
+                        start = float(getattr(entry, "start", 0.0))
+                        duration = float(getattr(entry, "duration", 0.0))
+                    text = text.replace('\n', ' ').strip()
+                    end = start + duration
+                    chunk_lines.append(f"[{idx}] [{start:.2f} - {end:.2f}] {text}")
+                chunk_transcript_text = "\n".join(chunk_lines)
+                chunks.append((i, chunk_transcript_text))
+
+            logger.info(f"Running Agent 1: The Clip Scout in parallel across {len(chunks)} chunks...")
+            all_candidates = []
+            chunk_errors = []
             
-            selected_candidates = _deduplicate_candidates(selected_candidates)
-            logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips after safety check.")
-        except Exception as e:
-            logger.error(f"Content Curator execution failed: {e}. Falling back to programmatic candidate deduplication.")
-            selected_candidates = _deduplicate_candidates(candidates)
+            def _scout_chunk(chunk_idx, chunk_text):
+                scout_prompt = SCOUT_AGENT_PROMPT_TEMPLATE.format(transcript=chunk_text)
+                try:
+                    scout_response_text = llm.call(
+                        system_prompt="You are a short-form video researcher that outputs only valid JSON.",
+                        user_prompt=scout_prompt,
+                        response_json=True,
+                        model=SCOUT_MODEL
+                    )
+                    scout_data = json.loads(_extract_json_from_response(scout_response_text))
+                    if "candidates" in scout_data:
+                        return scout_data["candidates"], None
+                    else:
+                        return _extract_clips_list(scout_data), None
+                except Exception as e:
+                    return [], e
 
-        if not selected_candidates:
-            selected_candidates = candidates
-            selected_candidates = _deduplicate_candidates(selected_candidates)
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(_scout_chunk, i, chunk_text): i
+                    for i, chunk_text in chunks
+                }
+                for future in as_completed(futures):
+                    chunk_idx = futures[future]
+                    try:
+                        res_candidates, err = future.result()
+                        if err:
+                            chunk_errors.append(f"Chunk starting at index {chunk_idx}: {err}")
+                        else:
+                            all_candidates.extend(res_candidates)
+                    except Exception as e:
+                        chunk_errors.append(f"Future error for chunk at index {chunk_idx}: {e}")
 
-        # Save curated checkpoint immediately after curation completes
-        if checkpoint_key and selected_candidates:
-            save_pipeline_checkpoint(checkpoint_key, "curated", selected_candidates)
+            # If all chunks failed, raise a RuntimeError
+            if len(chunk_errors) == len(chunks) and chunks:
+                error_msg = f"All {len(chunks)} Scout chunks failed. Errors: {'; '.join(chunk_errors)}"
+                logger.error(error_msg)
+                raise RuntimeError(f"Clip Scout failed: {error_msg}")
 
-    if num_clips is not None and len(selected_candidates) > num_clips:
-        selected_candidates.sort(key=lambda x: x.get("virality_score", 0.0), reverse=True)
-        logger.info(f"Capping selected candidates from {len(selected_candidates)} to {num_clips} before refinement to save API credits.")
-        selected_candidates = selected_candidates[:num_clips]
+            candidates = all_candidates
+            scout_count = len(candidates)
+            logger.info(f"Clip Scout found {scout_count} total candidates across all chunks.")
+
+            # Save scout checkpoint immediately after expensive LLM calls
+            if checkpoint_key and candidates:
+                save_pipeline_checkpoint(checkpoint_key, "scout", candidates)
+
+        if not candidates:
+            logger.info("Clip Scout did not find any candidates in the transcript. Returning empty list.")
+            return []
+
+        # Limit candidates to prevent huge API credit waste (production safety guardrail)
+        max_cands_to_score = max(5, (num_clips or 5) * 2)
+        if len(candidates) > max_cands_to_score:
+            logger.info(f"Sampling {max_cands_to_score} candidates out of {len(candidates)} to save API credits.")
+            n_candidates = len(candidates)
+            step = (n_candidates - 1) / (max_cands_to_score - 1)
+            sampled = []
+            for i in range(max_cands_to_score):
+                idx = int(round(i * step))
+                idx = max(0, min(idx, n_candidates - 1))
+                cand_to_add = candidates[idx]
+                if cand_to_add not in sampled:
+                    sampled.append(cand_to_add)
+            if not sampled:
+                candidates = candidates[:max_cands_to_score]
+            else:
+                candidates = sampled
+
+        # Run dedicated Scoring Agent on all candidates (needed by Curator for ranking/overlaps)
+        # Check for scored checkpoint first to avoid redundant LLM calls
+        scored_checkpoint = load_pipeline_checkpoint(checkpoint_key, "scored") if checkpoint_key else None
+        if scored_checkpoint is not None:
+            logger.info(f"[Checkpoint] Reusing {len(scored_checkpoint)} scored candidates from disk. Skipping Scoring Agent LLM calls.")
+            candidates = scored_checkpoint
+        else:
+            logger.info(f"Running dedicated Scoring Agent on {len(candidates)} candidates...")
+            scored_candidates = []
+        
+            def _score_candidate(cand):
+                try:
+                    c_start = max(0, min(int(float(cand["start_index"])), len(raw_transcript) - 1))
+                    c_end = max(c_start, min(int(float(cand["end_index"])), len(raw_transcript) - 1))
+                    clip_lines = [raw_transcript[idx].text for idx in range(c_start, c_end + 1)]
+                    clip_text = " ".join(clip_lines)
+                    
+                    if api_key.startswith("mock"):
+                        raw_scores = score_clip_mock(cand["title"])
+                    else:
+                        prompt_scoring = SCORING_AGENT_PROMPT_TEMPLATE.format(
+                            title=cand["title"],
+                            clip_text=clip_text
+                        )
+                        scores_response = llm.call(
+                            system_prompt="You are a short-form content scoring assistant that outputs only valid JSON.",
+                            user_prompt=prompt_scoring,
+                            response_json=True,
+                            model=VIRALITY_MODEL
+                        )
+                        raw_scores = json.loads(_extract_json_from_response(scores_response))
+                        
+                    variant_id = random.choice(["A", "B"])
+                    exp_config = ACTIVE_EXPERIMENT["variants"][variant_id]
+                    weights = exp_config["weights"]
+                    
+                    final_score, adjusted_scores = calculate_virality_score(clip_text, cand["title"], raw_scores, weights)
+                    
+                    new_cand = cand.copy()
+                    new_cand["virality_score"] = final_score
+                    new_cand["detailed_scores"] = adjusted_scores
+                    new_cand["raw_llm_scores"] = {k: raw_scores[k] for k in raw_scores if k != "reasoning"}
+                    new_cand["score_reasoning"] = raw_scores.get("reasoning", {})
+                    
+                    new_cand["experiment_id"] = ACTIVE_EXPERIMENT["experiment_id"]
+                    new_cand["variant_id"] = variant_id
+                    new_cand["scoring_version"] = exp_config["scoring_version"]
+                    new_cand["prompt_version"] = exp_config["prompt_version"]
+                    new_cand["weight_version"] = exp_config["weight_version"]
+                    
+                    return new_cand
+                except Exception as ex:
+                    logger.error(f"Scoring Agent failed for candidate '{cand.get('title', 'Unknown')}': {ex}")
+                    new_cand = cand.copy()
+                    fallback_scores = score_clip_mock(cand.get("title", "Fallback"))
+                    
+                    variant_id = random.choice(["A", "B"])
+                    exp_config = ACTIVE_EXPERIMENT["variants"][variant_id]
+                    weights = exp_config["weights"]
+                    
+                    final_score, adjusted_scores = calculate_virality_score("", cand.get("title", "Fallback"), fallback_scores, weights)
+                    new_cand["virality_score"] = final_score
+                    new_cand["detailed_scores"] = adjusted_scores
+                    new_cand["raw_llm_scores"] = fallback_scores
+                    new_cand["score_reasoning"] = {}
+                    
+                    new_cand["experiment_id"] = ACTIVE_EXPERIMENT["experiment_id"]
+                    new_cand["variant_id"] = variant_id
+                    new_cand["scoring_version"] = exp_config["scoring_version"]
+                    new_cand["prompt_version"] = exp_config["prompt_version"]
+                    new_cand["weight_version"] = exp_config["weight_version"]
+                    
+                    return new_cand
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(_score_candidate, cand) for cand in candidates]
+                for future in as_completed(futures):
+                    res = future.result()
+                    scored_candidates.append(res)
+
+            # Save scored checkpoint immediately after all scoring completes
+            if checkpoint_key and scored_candidates:
+                save_pipeline_checkpoint(checkpoint_key, "scored", scored_candidates)
+
+            candidates = scored_candidates
+
+        # 2. --- AGENT 2: THE CONTENT CURATOR (DEDUPLICATOR) ---
+        # Check for curated checkpoint first to avoid redundant LLM call
+        curated_checkpoint = load_pipeline_checkpoint(checkpoint_key, "curated") if checkpoint_key else None
+        if curated_checkpoint is not None:
+            logger.info(f"[Checkpoint] Reusing {len(curated_checkpoint)} curated candidates from disk. Skipping Curator LLM call.")
+            selected_candidates = curated_checkpoint
+        else:
+            selected_candidates = []
+            try:
+                logger.info("Running Agent 2: The Content Curator...")
+                candidates_json = json.dumps(candidates, indent=2)
+                # Fetch Personalized Creator AI profile context & few-shot examples
+                profile_context = ""
+                few_shot_examples = ""
+                try:
+                    from creator_profile import get_creator_profile
+                    from retrieval_service import get_few_shot_prompt_context
+                    
+                    profile = get_creator_profile()
+                    style_prefs = profile.get("style_preferences", {})
+                    
+                    profile_context = (
+                        f"\n--- PERSONALIZED CREATOR PREFERENCES (ALIGN TO THESE STYLE VALUES) ---\n"
+                        f"  - Target Clip Duration: {style_prefs.get('clip_duration_secs', 42.0)} seconds\n"
+                        f"  - Preferred Subtitle Style: {style_prefs.get('subtitle_style', 'kinetic')}\n"
+                        f"  - Preferred Emotion/Tone: {style_prefs.get('primary_emotion', 'engaging')}\n"
+                        f"  - Average Speech Reading Speed: {style_prefs.get('reading_speed_wpm', 180.0)} words/minute\n"
+                        f"  - Expected Words Per Chunk: {style_prefs.get('words_per_chunk', 2.5)} words\n"
+                        f"  - Preferred Energy Level: {style_prefs.get('energy_level', 7)}/10\n"
+                    )
+                    # Use first few candidate titles as a search query for similar successful past clips
+                    query_text = " ".join([cand.get("title", "") for cand in candidates[:3]])
+                    few_shot_examples = get_few_shot_prompt_context(query_text, limit=2)
+                except Exception as e:
+                    logger.debug(f"Could not load personalized context for Curator Agent: {e}")
+
+                curator_prompt = CURATOR_AGENT_PROMPT_TEMPLATE.format(
+                    candidates_json=candidates_json,
+                    transcript=transcript,
+                    creator_profile_context=profile_context,
+                    few_shot_examples=few_shot_examples
+                )
+                if num_clips is not None:
+                    curator_prompt += f"\n\nIMPORTANT: The user explicitly requested to select at most {num_clips} clip(s). You MUST select a maximum of {num_clips} of the very best candidate(s)."
+                
+                curator_response_text = llm.call(
+                    system_prompt="You are a content curator assistant that outputs only valid JSON.",
+                    user_prompt=curator_prompt,
+                    response_json=True,
+                    model=CURATOR_MODEL
+                )
+                curator_data = json.loads(_extract_json_from_response(curator_response_text))
+                if "selected_clips" in curator_data:
+                    selected_candidates = curator_data["selected_clips"]
+                else:
+                    selected_candidates = _extract_clips_list(curator_data)
+                
+                mapped_selected = []
+                for sel in selected_candidates:
+                    match = None
+                    try:
+                        sel_start = int(float(sel.get("start_index", 0)))
+                        sel_end = int(float(sel.get("end_index", 0)))
+                    except (ValueError, TypeError):
+                        sel_start, sel_end = 0, 0
+                        
+                    for cand in candidates:
+                        try:
+                            cand_start = int(float(cand.get("start_index", 0)))
+                            cand_end = int(float(cand.get("end_index", 0)))
+                        except (ValueError, TypeError):
+                            continue
+                        if sel_start == cand_start and sel_end == cand_end:
+                            match = cand
+                            break
+                    if match:
+                        new_sel = match.copy()
+                        new_sel.update({k: v for k, v in sel.items() if k not in ("virality_score", "detailed_scores", "raw_llm_scores", "score_reasoning")})
+                        mapped_selected.append(new_sel)
+                    else:
+                        mapped_selected.append(sel)
+                selected_candidates = mapped_selected
+                
+                selected_candidates = _deduplicate_candidates(selected_candidates)
+                logger.info(f"Content Curator selected {len(selected_candidates)} unique, non-overlapping clips after safety check.")
+            except Exception as e:
+                logger.error(f"Content Curator execution failed: {e}. Falling back to programmatic candidate deduplication.")
+                selected_candidates = _deduplicate_candidates(candidates)
+
+            if not selected_candidates:
+                selected_candidates = candidates
+                selected_candidates = _deduplicate_candidates(selected_candidates)
+
+            # Save curated checkpoint immediately after curation completes
+            if checkpoint_key and selected_candidates:
+                save_pipeline_checkpoint(checkpoint_key, "curated", selected_candidates)
+
+        if num_clips is not None and len(selected_candidates) > num_clips:
+            selected_candidates.sort(key=lambda x: x.get("virality_score", 0.0), reverse=True)
+            logger.info(f"Capping selected candidates from {len(selected_candidates)} to {num_clips} before refinement to save API credits.")
+            selected_candidates = selected_candidates[:num_clips]
 
     # 3 & 4. --- AGENTS 3 & 4: SENTENCE EDITOR & VIRAL PUBLISHER (Parallel) ---
     refined_candidates = []
